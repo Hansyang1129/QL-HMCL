@@ -91,6 +91,8 @@ java -Dhmcl.dependencies.dir="$env:TEMP\opencode\openjfx" -jar HMCL\build\libs\H
 
 ## 5. 提交历史
 
+> **2026-11-14 起仓库历史已压缩为单提交快照**（远端只有本项目维护者的提交）；下表旧哈希仅存在于本地分支 `archive/full-history`，如需查证请用 `git show <hash>`。
+
 | commit | 内容 |
 |---|---|
 | `d943c7484` | Gradle 依赖走 huaweicloud 镜像 |
