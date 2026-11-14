@@ -488,7 +488,9 @@ Git 身份（repo 本地）：`tux106` / `tux106@qq.com`。commit 规约：`feat
 
 - **目标仓库**：`https://github.com/Hansyang1129/QL-HMCL`（已设为 `origin`；`upstream` 远端已删，**上游锁死在 3.16.4，不跟更新**）。
 - **首次推送完成**（2026-11-14）：`ql/main` → `origin/main`（`da44566b6...ded83a003`，force 覆盖了建库时的 `Initial commit`），已设 tracking。本机推送要点：`http.sslBackend=openssl`（schannel 报 `SEC_E_NO_CREDENTIALS`）+ 沙箱禁用 GCM（`sh.exe` 无法建信号管道），改用凭据管理器里的 token 走 `http.extraheader` 一次性认证。
-- **分支约定**：远端默认分支 `main` = 本地 `ql/main`；本地 `main` 只作上游基线参考，不推送。
+- **历史形态（2026-11-14 调整）**：远端 `main` 是**单提交源码快照**（`2de63b96f`「QingLan launcher 3.16.4-ql2 (source snapshot)」），作者只有本项目维护者；上游作者不再出现在提交历史里，改为在 `README.md` 的「来源与署名」显式署名（huangyuhui + HMCL 贡献者 + 上游仓库 + 基线 commit + GPLv3）。
+- **本地保留**：完整上游历史在本地分支 `archive/full-history`（89 个自研提交 + 上游 4848 条），上游 3.16.4 基线在 `baseline-3164`（`d03ad38e2`），`upstream` remote 也保留 —— 都不推送，仅用于查来源与 diff。
+- **日常开发**：直接在新 `main` 上提交（快照之后只有本项目的提交）。
 - **CI 现状**（工作流未改）：`mirror.yml` 的 job 带 `if: github.repository == 'HMCL-dev/HMCL'` 守卫 → fork 上自动 skip；`release.yml` 只有 `workflow_dispatch` + owner 守卫；会跑的是 `gradle.yml`（`./gradlew build`，含 checkstyle/测试/makeExecutables）与 `check-codes.yml`（`checkstyle checkTranslations`）。**两者现在都是绿的**：checkstyle 四个任务全通过（2026-11-14 实跑，清掉 19 处未用 import）。
 - **许可**：沿用 GPLv3；根目录 `README.md` 已注明「HMCL 修改版 / 非官方发行版」。
 - **公开信息**：提交作者 `tux106 <tux106@qq.com>`；本文档里的本机路径已换成 `<repo>` / `<tmp>` / `<gradle-home>` / `%USERPROFILE%` 占位符。
