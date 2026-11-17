@@ -36,6 +36,7 @@ import org.jackhuang.hmcl.modpack.Modpack;
 import org.jackhuang.hmcl.modpack.modrinth.ModrinthModpackProvider;
 import org.jackhuang.hmcl.ql.QLPackGuard;
 import org.jackhuang.hmcl.ql.QLPackSync;
+import org.jackhuang.hmcl.ql.QLRpuUpdater;
 import org.jackhuang.hmcl.ql.QLSyncState;
 import org.jackhuang.hmcl.setting.GameDirectoryManager;
 import org.jackhuang.hmcl.task.Schedulers;
@@ -103,17 +104,18 @@ public class QLSyncPage extends DecoratorAnimatedPage implements DecoratorPage, 
 
         seedStartButton.setDisable(true);
         seedChooseButton.setOnAction(e -> chooseSeedFile());
-        seedStartButton.setOnAction(e -> applyUpdate());
+        seedStartButton.setOnAction(e -> applyPackUpdate());
         HBox seedRow = new HBox(8, seedChooseButton, seedStartButton);
         seedRow.setAlignment(Pos.CENTER_LEFT);
         HBox seedInfoRow = new HBox(0, seedInfoLabel);
         seedInfoRow.setAlignment(Pos.CENTER_LEFT);
 
         VBox content = new VBox(12,
-                createTitleLabel(i18n("qinglan.sync.instanceTitle")), instanceLabel,
-                actionsRow, statusLabel, progressLabel, progressBar, gateLabel,
+                createTitleLabel(i18n("qinglan.sync.instanceTitle")), instanceLabel, gateLabel,
+                createTitleLabel(i18n("qinglan.rpu.title")), actionsRow, statusLabel,
+                createTitleLabel(i18n("qinglan.sync.seed.title")), new VBox(8, seedInfoRow, seedRow),
                 createTitleLabel(i18n("qinglan.sync.optional")), optionalBox,
-                createTitleLabel(i18n("qinglan.sync.seed.title")), new VBox(8, seedInfoRow, seedRow));
+                progressLabel, progressBar);
         content.setPadding(new Insets(16));
         content.setFillWidth(true);
 
@@ -215,9 +217,8 @@ public class QLSyncPage extends DecoratorAnimatedPage implements DecoratorPage, 
         }).start();
     }
 
-    /// The pack this page works with: the picked file first, then whatever an earlier run
-    /// cached inside the instance. There is no remote address baked into the build -- the
-    /// pack file itself is the update source.
+    /// The pack file this page works with: the picked one first, then whatever an earlier
+    /// run cached inside the instance. There is no remote address baked into the build.
     private @Nullable Path selectedPack() {
         if (seedZipPath != null)
             return seedZipPath;
@@ -238,17 +239,147 @@ public class QLSyncPage extends DecoratorAnimatedPage implements DecoratorPage, 
         }
     }
 
-    /// Result of reading the picked pack: its version, the optional groups it offers and the
-    /// instance state the UI has to compare against.
-    private record PackCheck(String version, Set<String> groups, QLSyncState state) {
+    /// @return the selected instance's game version, or {@code null} when it cannot be resolved
+    private @Nullable String instanceGameVersion() {
+        String version = repositoryInstanceName();
+        if (version == null)
+            return null;
+        HMCLGameRepository repository = GameDirectoryManager.getSelectedRepository();
+        return repository == null || !repository.isLoaded()
+                ? null : repository.getGameVersion(version).orElse(null);
     }
 
-    /// Reads the pack and reports whether the instance is behind. The pack file is the update
-    /// source, so nothing is fetched from a manifest server.
+    /// @return the selected instance name, or {@code null} when nothing is selected
+    private @Nullable String repositoryInstanceName() {
+        HMCLGameRepository repository = GameDirectoryManager.getSelectedRepository();
+        if (repository == null || !repository.isLoaded())
+            return null;
+        return repository.getSelectedInstance();
+    }
+
+    /// Checks the RPU backend for the newest resource-pack release.
     private void checkUpdate() {
         if (busy)
             return;
 
+        refreshInstanceHint();
+        Path directory = runDirectory;
+        if (directory == null) {
+            Controllers.dialog(i18n("qinglan.sync.instance.none"), i18n("message.error"),
+                    MessageDialogPane.MessageType.ERROR);
+            return;
+        }
+        if (!syncable) {
+            Controllers.dialog(i18n("qinglan.sync.notSyncable"), i18n("message.error"),
+                    MessageDialogPane.MessageType.ERROR);
+            return;
+        }
+        String gameVersion = instanceGameVersion();
+        if (gameVersion == null) {
+            Controllers.dialog(i18n("qinglan.rpu.noVersion"), i18n("message.error"),
+                    MessageDialogPane.MessageType.ERROR);
+            return;
+        }
+
+        busy = true;
+        checkUpdateButton.setDisable(true);
+        statusLabel.setText(i18n("qinglan.sync.loading"));
+        Task.supplyAsync(Schedulers.io(), () -> QLRpuUpdater.check(directory, gameVersion))
+                .whenComplete(Schedulers.javafx(), (outcome, exception) -> {
+                    busy = false;
+                    checkUpdateButton.setDisable(!syncable);
+                    if (exception != null || outcome == null) {
+                        statusLabel.setText("");
+                        Controllers.dialog(i18n("qinglan.rpu.error", exception == null
+                                        ? i18n("message.unknown") : describe(exception)),
+                                i18n("message.error"), MessageDialogPane.MessageType.ERROR);
+                        return;
+                    }
+                    if (outcome.upToDate()) {
+                        statusLabel.setText(i18n("qinglan.rpu.upToDate", outcome.latest()));
+                        applyButton.setDisable(true);
+                    } else {
+                        statusLabel.setText(i18n("qinglan.rpu.versions",
+                                outcome.installed() == null ? "?" : outcome.installed(), outcome.latest()));
+                        applyButton.setDisable(false);
+                    }
+                }).start();
+    }
+
+    /// Updates the RPU cache from the backend (resource packs only; the launcher never decrypts).
+    private void applyUpdate() {
+        if (busy)
+            return;
+
+        refreshInstanceHint();
+        Path directory = runDirectory;
+        if (directory == null) {
+            Controllers.dialog(i18n("qinglan.sync.instance.none"), i18n("message.error"),
+                    MessageDialogPane.MessageType.ERROR);
+            return;
+        }
+        String gameVersion = instanceGameVersion();
+        if (gameVersion == null) {
+            Controllers.dialog(i18n("qinglan.rpu.noVersion"), i18n("message.error"),
+                    MessageDialogPane.MessageType.ERROR);
+            return;
+        }
+
+        busy = true;
+        checkUpdateButton.setDisable(true);
+        applyButton.setDisable(true);
+        seedChooseButton.setDisable(true);
+        seedStartButton.setDisable(true);
+        progressBar.setVisible(true);
+        progressBar.setManaged(true);
+        progressBar.setProgress(-1);
+        progressLabel.setVisible(true);
+        progressLabel.setManaged(true);
+
+        Task.supplyAsync(Schedulers.io(), () -> QLRpuUpdater.update(directory, gameVersion,
+                        (finished, total) -> runInFX(() -> {
+                            if (total > 0) {
+                                progressBar.setProgress((double) finished / total);
+                                progressLabel.setText(i18n("qinglan.sync.progress", finished, total));
+                            }
+                        })))
+                .whenComplete(Schedulers.javafx(), (outcome, exception) -> {
+                    busy = false;
+                    checkUpdateButton.setDisable(!syncable);
+                    applyButton.setDisable(false);
+                    seedChooseButton.setDisable(false);
+                    seedStartButton.setDisable(selectedPack() == null);
+                    progressBar.setVisible(false);
+                    progressBar.setManaged(false);
+                    progressLabel.setVisible(false);
+                    progressLabel.setManaged(false);
+                    if (exception != null || outcome == null) {
+                        Controllers.dialog(i18n("qinglan.rpu.error", exception == null
+                                        ? i18n("message.unknown") : describe(exception)),
+                                i18n("message.error"), MessageDialogPane.MessageType.ERROR);
+                        return;
+                    }
+                    if (outcome.upToDate()) {
+                        statusLabel.setText(i18n("qinglan.rpu.upToDate", outcome.latest()));
+                    } else if (outcome.failed() > 0) {
+                        statusLabel.setText(i18n("qinglan.rpu.versions",
+                                outcome.installed() == null ? "?" : outcome.installed(), outcome.latest()));
+                        Controllers.dialog(i18n("qinglan.rpu.partial",
+                                        String.valueOf(outcome.downloaded()), String.valueOf(outcome.failed())),
+                                i18n("message.warning"), MessageDialogPane.MessageType.WARNING);
+                    } else {
+                        statusLabel.setText(i18n("qinglan.rpu.updated", outcome.latest(),
+                                String.valueOf(outcome.downloaded())));
+                        Controllers.showToast(i18n("qinglan.rpu.updated", outcome.latest(),
+                                String.valueOf(outcome.downloaded())));
+                    }
+                }).start();
+    }
+
+    /// Reads the picked pack and reports whether the instance is behind it.
+    private void checkPackUpdate() {
+        if (busy)
+            return;
         refreshInstanceHint();
         Path directory = runDirectory;
         if (directory == null) {
@@ -263,17 +394,19 @@ public class QLSyncPage extends DecoratorAnimatedPage implements DecoratorPage, 
         }
 
         busy = true;
-        checkUpdateButton.setDisable(true);
-        statusLabel.setText(i18n("qinglan.sync.loading"));
+        seedChooseButton.setDisable(true);
+        seedStartButton.setDisable(true);
+        seedInfoLabel.setText(i18n("qinglan.sync.loading"));
         Task.supplyAsync(Schedulers.io(), () -> {
             String version = QLPackSync.readPackVersion(pack);
             Set<String> groups = QLPackSync.optionalGroups(pack);
             return new PackCheck(version, groups, QLSyncState.load(directory));
         }).whenComplete(Schedulers.javafx(), (check, exception) -> {
             busy = false;
-            checkUpdateButton.setDisable(!syncable);
+            seedChooseButton.setDisable(false);
+            seedStartButton.setDisable(selectedPack() == null);
             if (exception != null || check == null) {
-                statusLabel.setText("");
+                seedInfoLabel.setText("");
                 Controllers.dialog(i18n("qinglan.sync.fetch.failed",
                                 exception == null ? i18n("message.unknown") : describe(exception)),
                         i18n("message.error"), MessageDialogPane.MessageType.ERROR);
@@ -282,7 +415,7 @@ public class QLSyncPage extends DecoratorAnimatedPage implements DecoratorPage, 
             instanceState = check.state();
             String current = check.state().packVersion == null || check.state().packVersion.isBlank()
                     ? "?" : check.state().packVersion;
-            statusLabel.setText(i18n("qinglan.sync.versions", current, check.version()));
+            seedInfoLabel.setText(i18n("qinglan.pack.versions", current, check.version()));
 
             optionalBox.getChildren().clear();
             for (String group : check.groups()) {
@@ -294,8 +427,6 @@ public class QLSyncPage extends DecoratorAnimatedPage implements DecoratorPage, 
             }
             optionalBox.setManaged(!optionalBox.getChildren().isEmpty());
             optionalBox.setVisible(!optionalBox.getChildren().isEmpty());
-
-            applyButton.setDisable(false);
             if (current.equals(check.version()))
                 Controllers.showToast(i18n("qinglan.sync.upToDate", check.version()));
         }).start();
@@ -317,11 +448,10 @@ public class QLSyncPage extends DecoratorAnimatedPage implements DecoratorPage, 
         }).start();
     }
 
-    /// Applies the pack onto the current instance and reports what changed.
-    private void applyUpdate() {
+    /// Applies the picked pack onto the current instance (mods, configs, shaders, packs).
+    private void applyPackUpdate() {
         if (busy)
             return;
-
         refreshInstanceHint();
         Path directory = runDirectory;
         if (directory == null) {
@@ -341,10 +471,10 @@ public class QLSyncPage extends DecoratorAnimatedPage implements DecoratorPage, 
         }
 
         busy = true;
-        checkUpdateButton.setDisable(true);
-        applyButton.setDisable(true);
         seedChooseButton.setDisable(true);
         seedStartButton.setDisable(true);
+        checkUpdateButton.setDisable(true);
+        applyButton.setDisable(true);
         progressBar.setVisible(true);
         progressBar.setManaged(true);
         progressBar.setProgress(-1);
@@ -360,10 +490,10 @@ public class QLSyncPage extends DecoratorAnimatedPage implements DecoratorPage, 
                         })))
                 .whenComplete(Schedulers.javafx(), (outcome, exception) -> {
                     busy = false;
+                    seedChooseButton.setDisable(false);
+                    seedStartButton.setDisable(selectedPack() == null);
                     checkUpdateButton.setDisable(!syncable);
                     applyButton.setDisable(false);
-                    seedChooseButton.setDisable(false);
-                    seedStartButton.setDisable(false);
                     progressBar.setVisible(false);
                     progressBar.setManaged(false);
                     progressLabel.setVisible(false);
@@ -374,15 +504,13 @@ public class QLSyncPage extends DecoratorAnimatedPage implements DecoratorPage, 
                                 i18n("message.error"), MessageDialogPane.MessageType.ERROR);
                         return;
                     }
+                    instanceState = null;
                     displayOutcome(outcome);
-                    instanceState = null; // reload the version hint on the next check
-                })
-                .start();
+                }).start();
     }
 
-    private String describe(Exception exception) {
-        String message = exception.getLocalizedMessage();
-        return message == null || message.isBlank() ? exception.toString() : message;
+    /// Result of reading the picked pack: version, optional groups, instance state.
+    private record PackCheck(String version, Set<String> groups, QLSyncState state) {
     }
 
     /// Parses the seed pack the user picked: reads the embedded Modrinth manifest natively
@@ -424,7 +552,14 @@ public class QLSyncPage extends DecoratorAnimatedPage implements DecoratorPage, 
             seedInfoLabel.setText(i18n("qinglan.sync.seed.selected",
                     name == null ? "?" : name, modpack.getGameVersion() == null ? "?" : modpack.getGameVersion()));
             seedStartButton.setDisable(false);
+            checkPackUpdate();
         }).start();
+    }
+
+    /// @return the human message of an exception, falling back to its string form
+    private String describe(Exception exception) {
+        String message = exception.getLocalizedMessage();
+        return message == null || message.isBlank() ? exception.toString() : message;
     }
 
     private void displayOutcome(QLPackSync.Outcome outcome) {
