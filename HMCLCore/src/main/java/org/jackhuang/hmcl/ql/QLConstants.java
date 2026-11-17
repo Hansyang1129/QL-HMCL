@@ -29,12 +29,13 @@ public final class QLConstants {
     /// stamp refresh or arrival times into status labels.
     public static final DateTimeFormatter WALL_CLOCK = DateTimeFormatter.ofPattern("HH:mm:ss");
 
-    /// URL of the remote manifest published by the Qinglan resource server.
+    /// Update source baked into this build; deliberately empty.
     ///
-    /// <p>Provisional address until the partner resource server is online; the publishing
-    /// tool replaces this value at build time, so this constant must stay the single
-    /// source of truth.</p>
-    public static final String DEFAULT_MANIFEST_URL = "https://resource.ota8a.cn/qinglan/manifest.json";
+    /// <p>There is no public manifest URL yet: the previous placeholder
+    /// ({@code resource.ota8a.cn}) never existed. The real source travels with the pack and
+    /// is recorded in the instance's {@code ql-manifest-state.json} by the seed import, so
+    /// an instance without one simply has nothing to update from and says so.</p>
+    public static final String DEFAULT_MANIFEST_URL = "";
 
     /// File name suffix marking a managed file parked by a disabled optional-mod group.
     ///

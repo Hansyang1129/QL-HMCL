@@ -11,7 +11,7 @@
 为「轻蓝 MTR 2.0」整合包社区定制的启动器（品牌中文名为**轻蓝**，繁中作**輕藍**，罗马字 Qinglan；历史工作日志里的旧写法不改）：
 
 1. **增量同步**（已完成；2026-11-17 架构调整）：manifest 驱动（替代 1.7GB 整包重下），**单一 mods 频道**（不再区分官方包/优化包）+ 可选 mod 组（voxy/dh/axiom）。**资源包交给游戏内的 RPU 客户端**（它自建 `qlrpu/` 密文缓存 + 运行时虚拟挂载，不写 `resourcepacks/`）；**光影属于最小 mrpack，照常同步**；同步页只对带 `QingLanRPUClient` 的整合包实例开放（`QLPackGuard`），其他实例显示「此实例不可同步」。
-2. **种子导入**（阶段2，已完成）：直接安装 FULL/LITE `.mrpack`（`QLSeedImporter` + 同步页导入区块 + 「寻找实例」引导页）。
+2. **种子导入/更新**（阶段2，已完成；2026-11-17 改为「导入/更新现有实例」）：`QLPackImporter` 直接把选中的 `.mrpack` 应用到**当前实例**（mods/config/光影，RPU 路径跳过），不再新建实例、不再走 HMCL 原生安装流程。
 3. **论坛页**（阶段3，已完成）：qlbbs.ota8a.cn（Halo content API + RSS 兜底）。**用户明确要求：HMCL 原生 UI 组件渲染，禁止 WebView 套壳**。
 4. **服务器状态页**（阶段4，已完成）：SLP `play.simpfun.cn:32650` / MTR Web `:14614` / reporter `:19451`；进页自动探测 + 30s 轮询；manifest `servers[]` 字段仍预留。
 5. **发布工具**（已完成）：`QLManifestTool` 生成 manifest。
@@ -60,6 +60,7 @@ java -Dhmcl.dependencies.dir="$env:TEMP\opencode\openjfx" -jar HMCL\build\libs\H
 **核心引擎** `HMCLCore/src/main/java/org/jackhuang/hmcl/ql/`：
 - `QLManifest.java` — manifest 模型 + `fromJson` 严格校验（schema=1；channels 必含 **std + common**，旧 pfm 忽略；路径禁 `:`、`..`、`/` 开头；sha1/urls 必填；频道内路径去重）。嵌套 `pack{name,version,updatedAt}`。
 - `QLDirectoryLayout.java` — 目录语义：活跃=`mods/`，`.qinglan-channel` 标记；单频道后只在 std 上 recover/stamp。旧的 `mods-pfm/` 不认领、不删除。
+- `QLPackImporter.java` — 种子包导入/更新：读 mrpack 自身的 index + overrides，按 SHA-1 对账写入当前实例，记录 state 并刷新 dblpack（RP/qlrpu 不碰）。
 - `QLPackGuard.java` — 同步门禁：扫 `mods/*.jar` 找 RPU 模组（大小写不敏感、排除 `*.jar.disabled`），决定实例能否在同步页更新。
 - `QLSyncState.java` — 实例状态 `ql-manifest-state.json`（`STATE_FILE` 常量）：`packVersion/manifestUrl/activeChannel/enabledOptional/tracked`。构造私有，用 `empty()`；`load(gameDir)` 缺文件返回空态。
 - `QLSyncManager.java` — `sync(gameDir, manifest, targetChannel, optionalExtras, listener) -> SyncOutcome`。见 §7 行为备忘。
@@ -495,3 +496,13 @@ Git 身份（repo 本地）：`tux106` / `tux106@qq.com`。commit 规约：`feat
 - **门禁 `QLPackGuard`**：只认文件名含 `QingLanRPUClient`（大小写不敏感、`*.jar`、排除 `*.jar.disabled`；`rpubridge`/`QLRPU-helper` 不算）；`QLSyncPage.refreshInstanceHint` 判定，非整合包实例禁用「检查更新/保存地址/下载并应用」并显示 `qinglan.sync.notSyncable`，实例行显示 RPU 文件名；删掉频道单选组与 4 个 `qinglan.sync.channel*` 键（含 yue/nan）。
 - 测试：新增 `QLPackGuardTest`（6 例）；`QLSyncManagerTest` RP 与 `qlrpu` 双移交；`QLManifestToolTest` 光影进 common、RP/qlrpu/RPU 配置不进；E2E 删 pfm 场景、common 期望 230；`QLSeedImporterTest` 计数与「退役 pfm 目录不动」断言更新；ACL 不可写环境里 seed 读拒绝分支改 assume 跳过。
 - 门禁：ql **59 例** · `checkTranslations` · `compileJava` · 四个 checkstyle 任务全绿。
+
+## 续19（2026-11-17）：种子包改成「导入/更新此实例」
+
+用户判定：种子包那块不叫安装，叫**导入/更新**；要作用在**当前实例**上，不要新建实例、不要用 HMCL 原生安装流程（要自己写）。
+
+- 新增 `QLPackImporter`（HMCLCore）：读 mrpack 的 `modrinth.index.json` + `overrides/**`，先建好 manifest 再逐条 SHA-1 对账——一致算 unchanged、缺失/过期则从 overrides 取或按 URL 下载（下载后必须校验 sha1）；写入走 `.qlimport` 临时文件 + ATOMIC_MOVE；`resourcepacks/**`、`qlrpu/**` 跳过（RPU 的），mods 落 `mods/`、config 与光影落游戏根；可选组按 state 里已启用集合决定是否存成 `*.jar.disabled`；最后写 state（tracked/packVersion/activeChannel/manifestUrl）并重刷 dblpack。
+- 同步页：删掉「新实例名」输入框与原生安装链（`ModpackHelper.getInstallTask` / `QLSeedImporter` 调用 / `taskDialog`），改为「选择种子包... → 导入/更新此实例」；受 RPU 门禁约束（非整合包实例直接拒绝）；进度条复用逐文件进度；完成后 toast「已按种子包更新此实例：写入 N 个文件」，并清 `instanceState` 让下次检查更新重读。
+- i18n：`seed.start`→`seed.apply`（导入/更新此实例），`seed.importing`/`seed.done` 文案改口径，新增 `seed.updated`；删掉 `seed.instance`/`seed.nameMissing`/`seed.seeding`/`seed.doneToast`（en/zh_CN/zh 三处同步；注意该门禁连 zh 也禁止全角括号）。
+- 测试：新增 `QLPackImporterTest`（过期 mod 覆盖、缺失 config 写入、resourcepacks 不落地、state 记录、二次运行幂等、null 源不覆盖已记录地址）。
+- 门禁：ql **60 例** · `checkTranslations` · `compileJava` · 四个 checkstyle 任务全绿。

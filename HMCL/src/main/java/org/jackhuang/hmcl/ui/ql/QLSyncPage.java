@@ -19,7 +19,6 @@ package org.jackhuang.hmcl.ui.ql;
 
 import com.jfoenix.controls.JFXButton;
 import com.jfoenix.controls.JFXCheckBox;
-import com.jfoenix.controls.JFXTextField;
 import javafx.beans.property.ReadOnlyObjectProperty;
 import javafx.beans.property.ReadOnlyObjectWrapper;
 import javafx.geometry.Insets;
@@ -34,14 +33,13 @@ import javafx.scene.layout.VBox;
 import javafx.stage.FileChooser;
 import kala.compress.archivers.zip.ZipArchiveReader;
 import org.jackhuang.hmcl.game.HMCLGameRepository;
-import org.jackhuang.hmcl.game.ModpackHelper;
 import org.jackhuang.hmcl.modpack.Modpack;
 import org.jackhuang.hmcl.modpack.modrinth.ModrinthModpackProvider;
 import org.jackhuang.hmcl.ql.QLConstants;
 import org.jackhuang.hmcl.ql.QLManifest;
+import org.jackhuang.hmcl.ql.QLPackImporter;
 import org.jackhuang.hmcl.ql.QLManifestFetcher;
 import org.jackhuang.hmcl.ql.QLPackGuard;
-import org.jackhuang.hmcl.ql.QLSeedImporter;
 import org.jackhuang.hmcl.ql.QLSyncManager;
 import org.jackhuang.hmcl.ql.QLSyncState;
 import org.jackhuang.hmcl.setting.GameDirectoryManager;
@@ -53,7 +51,6 @@ import org.jackhuang.hmcl.ui.construct.MessageDialogPane;
 import org.jackhuang.hmcl.ui.construct.PageAware;
 import org.jackhuang.hmcl.ui.decorator.DecoratorAnimatedPage;
 import org.jackhuang.hmcl.ui.decorator.DecoratorPage;
-import org.jackhuang.hmcl.util.TaskCancellationAction;
 import org.jackhuang.hmcl.util.io.CompressingUtils;
 import org.jackhuang.hmcl.util.io.FileUtils;
 import org.jetbrains.annotations.NotNullByDefault;
@@ -88,9 +85,8 @@ public class QLSyncPage extends DecoratorAnimatedPage implements DecoratorPage, 
 
     private final VBox optionalBox = new VBox(4);
     private final Label seedInfoLabel = new Label();
-    private final JFXTextField seedNameField = new JFXTextField();
     private final JFXButton seedChooseButton = FXUtils.newRaisedButton(i18n("qinglan.sync.seed.choose"));
-    private final JFXButton seedStartButton = FXUtils.newRaisedButton(i18n("qinglan.sync.seed.start"));
+    private final JFXButton seedStartButton = FXUtils.newRaisedButton(i18n("qinglan.sync.seed.apply"));
 
     private @Nullable Path runDirectory;
     private @Nullable QLSyncState instanceState;
@@ -110,11 +106,9 @@ public class QLSyncPage extends DecoratorAnimatedPage implements DecoratorPage, 
         applyButton.setOnAction(e -> applyUpdate());
 
         seedStartButton.setDisable(true);
-        seedNameField.setPromptText(i18n("qinglan.sync.seed.instance"));
-        HBox.setHgrow(seedNameField, Priority.ALWAYS);
         seedChooseButton.setOnAction(e -> chooseSeedFile());
-        seedStartButton.setOnAction(e -> startSeedImport());
-        HBox seedRow = new HBox(8, seedNameField, seedChooseButton, seedStartButton);
+        seedStartButton.setOnAction(e -> importSeedIntoInstance());
+        HBox seedRow = new HBox(8, seedChooseButton, seedStartButton);
         seedRow.setAlignment(Pos.CENTER_LEFT);
         HBox seedInfoRow = new HBox(0, seedInfoLabel);
         seedInfoRow.setAlignment(Pos.CENTER_LEFT);
@@ -227,13 +221,14 @@ public class QLSyncPage extends DecoratorAnimatedPage implements DecoratorPage, 
         }).start();
     }
 
-    /// Manifest URL of an instance: whatever the instance recorded (a seeded instance
-    /// carries the URL of its pack) or the value baked into this build. It is deliberately
-    /// not user-editable -- the page shows no URL at all.
-    private static String manifestUrl(@Nullable QLSyncState state) {
+    /// Update source of an instance: whatever its state recorded (a seeded instance carries
+    /// the URL of its pack). Builds carry no fallback URL, so {@code null} means "this
+    /// instance has nothing to update from" -- never a guessed address.
+    private static @Nullable String manifestUrl(@Nullable QLSyncState state) {
         if (state != null && state.manifestUrl != null && !state.manifestUrl.isBlank())
-            return state.manifestUrl;
-        return QLConstants.DEFAULT_MANIFEST_URL;
+            return state.manifestUrl.trim();
+        String baked = QLConstants.DEFAULT_MANIFEST_URL;
+        return baked == null || baked.isBlank() ? null : baked.trim();
     }
 
     private void checkUpdate() {
@@ -253,7 +248,16 @@ public class QLSyncPage extends DecoratorAnimatedPage implements DecoratorPage, 
                 return;
             }
 
-            QLManifestFetcher.createFetchTask(manifestUrl(loaded))
+            String source = manifestUrl(loaded);
+            if (source == null) {
+                busy = false;
+                checkUpdateButton.setDisable(false);
+                statusLabel.setText("");
+                Controllers.dialog(i18n("qinglan.sync.noSource"), i18n("message.error"),
+                        MessageDialogPane.MessageType.ERROR);
+                return;
+            }
+            QLManifestFetcher.createFetchTask(source)
                     .whenComplete(Schedulers.javafx(), (result, exception) -> {
                         busy = false;
                         checkUpdateButton.setDisable(false);
@@ -368,7 +372,8 @@ public class QLSyncPage extends DecoratorAnimatedPage implements DecoratorPage, 
     }
 
     /// Parses the seed pack the user picked: reads the embedded Modrinth manifest natively
-    /// and suggests the instance name from it. The actual import happens in {@link #startSeedImport()}.
+    /// so the UI can show what is about to be applied. The actual import/update happens in
+    /// {@link #importSeedIntoInstance()}.
     private void chooseSeedFile() {
         if (busy)
             return;
@@ -402,41 +407,37 @@ public class QLSyncPage extends DecoratorAnimatedPage implements DecoratorPage, 
             seedModpack = modpack;
             String name = modpack.getName() == null || modpack.getName().isBlank()
                     ? modpack.getVersion() : modpack.getName();
-            seedNameField.setText(name == null ? "" : name);
             seedInfoLabel.setText(i18n("qinglan.sync.seed.selected",
                     name == null ? "?" : name, modpack.getGameVersion() == null ? "?" : modpack.getGameVersion()));
             seedStartButton.setDisable(false);
         }).start();
     }
 
-    /// Runs the seed import: the native HMCL modpack installer unpacks and completes the pack,
-    /// then the remote manifest is fetched and {@link QLSeedImporter} QLizes the resulting
-    /// instance with a per-entry SHA-1 reconciliation.
-    private void startSeedImport() {
+    /// Imports or updates **this** instance from the picked seed pack.
+    ///
+    /// <p>Nothing is installed into a freshly named instance any more: the pack's own index
+    /// is applied onto the selected instance (mods, configs and shaders; resource packs stay
+    /// with the in-game RPU client), the result is recorded as the sync state, and a regular
+    /// "check update" continues from there.</p>
+    private void importSeedIntoInstance() {
         if (busy || seedZipPath == null || seedModpack == null)
             return;
 
-        String name = seedNameField.getText();
-        if (name == null || name.isBlank()) {
-            Controllers.dialog(i18n("qinglan.sync.seed.nameMissing"), i18n("message.error"), MessageDialogPane.MessageType.ERROR);
+        refreshInstanceHint();
+        Path directory = runDirectory;
+        if (directory == null) {
+            Controllers.dialog(i18n("qinglan.sync.instance.none"), i18n("message.error"),
+                    MessageDialogPane.MessageType.ERROR);
             return;
         }
-        String base = name.trim();
-        HMCLGameRepository repository = GameDirectoryManager.getSelectedRepository();
-        if (repository == null || !repository.isLoaded()) {
-            Controllers.dialog(i18n("qinglan.sync.instance.none"), i18n("message.error"), MessageDialogPane.MessageType.ERROR);
+        if (!syncable) {
+            Controllers.dialog(i18n("qinglan.sync.notSyncable"), i18n("message.error"),
+                    MessageDialogPane.MessageType.ERROR);
             return;
         }
-        // Uniquify the instance name in the background of the user's input.
-        name = base;
-        for (int i = 1; repository.hasVersion(name); i++)
-            name = base + " (" + i + ")";
-        final String instanceName = name;
-        seedNameField.setText(instanceName);
 
-        Path zipPath = seedZipPath;
-        Modpack modpack = seedModpack;
-        String manifestUrl = manifestUrl(instanceState);
+        final Path mrpack = seedZipPath;
+        final String source = manifestUrl(instanceState);
 
         busy = true;
         seedChooseButton.setDisable(true);
@@ -450,50 +451,38 @@ public class QLSyncPage extends DecoratorAnimatedPage implements DecoratorPage, 
         progressLabel.setVisible(true);
         progressLabel.setManaged(true);
 
-        Task<Object> chain = ModpackHelper.getInstallTask(repository, zipPath, instanceName, modpack, null)
-                .thenComposeAsync(QLManifestFetcher.createFetchTask(manifestUrl))
-                .thenComposeAsync(Schedulers.defaultScheduler(), (QLManifest manifest) -> Task.supplyAsync(Schedulers.io(), () -> {
-                    runInFX(() -> seedInfoLabel.setText(i18n("qinglan.sync.seed.seeding")));
-                    QLSeedImporter.SeedOutcome outcome = QLSeedImporter.seedize(
-                            repository.getRunDirectory(instanceName), manifest, manifestUrl, "std", null,
-                            (finished, total) -> runInFX(() -> {
-                                if (total > 0) {
-                                    progressBar.setProgress((double) finished / total);
-                                    progressLabel.setText(i18n("qinglan.sync.progress", finished, total));
-                                }
-                                seedInfoLabel.setText(i18n("qinglan.sync.seed.seeding"));
-                            }));
-                    repository.setSelectedInstance(instanceName);
-                    return outcome;
-                }));
-
-        Controllers.taskDialog(chain, i18n("qinglan.sync.seed.title"), TaskCancellationAction.NORMAL);
-        chain.whenComplete(Schedulers.javafx(), (outcome, exception) -> {
-            busy = false;
-            seedChooseButton.setDisable(false);
-            seedStartButton.setDisable(false);
-            checkUpdateButton.setDisable(false);
-            applyButton.setDisable(false);
-            progressBar.setVisible(false);
-            progressBar.setManaged(false);
-            progressLabel.setVisible(false);
-            progressLabel.setManaged(false);
-            if (exception != null) {
-                seedInfoLabel.setText("");
-                Controllers.dialog(i18n("qinglan.sync.seed.failed", describe(exception)),
-                        i18n("message.error"), MessageDialogPane.MessageType.ERROR);
-                return;
-            }
-            QLSeedImporter.SeedOutcome seedOutcome = (QLSeedImporter.SeedOutcome) outcome;
-            if (seedOutcome == null)
-                return;
-            refreshInstanceHint();
-            instanceState = null; // force a state reload for the freshly selected instance
-            seedInfoLabel.setText(i18n("qinglan.sync.seed.done",
-                    String.valueOf(seedOutcome.seeded), String.valueOf(seedOutcome.missing),
-                    String.valueOf(seedOutcome.mismatch)));
-            Controllers.showToast(i18n("qinglan.sync.seed.doneToast", instanceName));
-        });
+        Task.supplyAsync(Schedulers.io(), () -> QLPackImporter.applyToInstance(directory, mrpack, source,
+                        (finished, total) -> runInFX(() -> {
+                            if (total > 0) {
+                                progressBar.setProgress((double) finished / total);
+                                progressLabel.setText(i18n("qinglan.sync.progress", finished, total));
+                            }
+                        })))
+                .whenComplete(Schedulers.javafx(), (outcome, exception) -> {
+                    busy = false;
+                    seedChooseButton.setDisable(false);
+                    seedStartButton.setDisable(seedZipPath == null);
+                    checkUpdateButton.setDisable(!syncable);
+                    applyButton.setDisable(true); // a fresh manifest check is needed first
+                    progressBar.setVisible(false);
+                    progressBar.setManaged(false);
+                    progressLabel.setVisible(false);
+                    progressLabel.setManaged(false);
+                    if (exception != null || outcome == null) {
+                        seedInfoLabel.setText("");
+                        Controllers.dialog(i18n("qinglan.sync.seed.failed",
+                                        exception == null ? i18n("message.unknown") : describe(exception)),
+                                i18n("message.error"), MessageDialogPane.MessageType.ERROR);
+                        return;
+                    }
+                    instanceState = null;
+                    seedInfoLabel.setText(i18n("qinglan.sync.seed.done",
+                            String.valueOf(outcome.imported()), String.valueOf(outcome.unchanged()),
+                            String.valueOf(outcome.renamed()), String.valueOf(outcome.failed())));
+                    Controllers.showToast(i18n("qinglan.sync.seed.updated",
+                            String.valueOf(outcome.imported() + outcome.renamed())));
+                })
+                .start();
     }
 
     private void displayOutcome(QLSyncManager.SyncOutcome outcome) {

@@ -185,9 +185,12 @@ public final class QLManifestTool {
     // Manifest building
     // ============================================================================================
 
-    /// Builds the manifest JSON object from a modpack zip. Package-private so
-    /// the manifest regression tests can drive the collector without the CLI.
-    static JsonObject buildFromMrpack(Path mrpack, Map<String, String> options) throws IOException {
+    /// Builds the manifest JSON object from a modpack zip.
+    ///
+    /// <p>Public because the seed import derives a manifest straight from the picked
+    /// {@code .mrpack} when the instance has no configured update source; the regression
+    /// tests drive the same collector without the CLI.</p>
+    public static JsonObject buildFromMrpack(Path mrpack, Map<String, String> options) throws IOException {
         String baseUrl = trimTrailingSlash(options.getOrDefault("base-url", DEFAULT_BASE_URL));
         Report report = new Report();
         Set<String> knownPaths = new HashSet<>();
