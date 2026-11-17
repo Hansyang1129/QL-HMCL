@@ -284,10 +284,12 @@ public class QLSyncPage extends DecoratorAnimatedPage implements DecoratorPage, 
         busy = true;
         checkUpdateButton.setDisable(true);
         statusLabel.setText(i18n("qinglan.sync.loading"));
+        showIndeterminateProgress(true);
         Task.supplyAsync(Schedulers.io(), () -> QLRpuUpdater.check(directory, gameVersion))
                 .whenComplete(Schedulers.javafx(), (outcome, exception) -> {
                     busy = false;
                     checkUpdateButton.setDisable(!syncable);
+                    showIndeterminateProgress(false);
                     if (exception != null || outcome == null) {
                         statusLabel.setText("");
                         Controllers.dialog(i18n("qinglan.rpu.error", exception == null
@@ -403,6 +405,7 @@ public class QLSyncPage extends DecoratorAnimatedPage implements DecoratorPage, 
         seedChooseButton.setDisable(true);
         seedStartButton.setDisable(true);
         seedInfoLabel.setText(i18n("qinglan.sync.loading"));
+        showIndeterminateProgress(true);
         Task.supplyAsync(Schedulers.io(), () -> {
             String version = QLPackSync.readPackVersion(pack);
             Set<String> groups = QLPackSync.optionalGroups(pack);
@@ -411,6 +414,7 @@ public class QLSyncPage extends DecoratorAnimatedPage implements DecoratorPage, 
             busy = false;
             seedChooseButton.setDisable(false);
             seedStartButton.setDisable(selectedPack() == null);
+            showIndeterminateProgress(false);
             if (exception != null || check == null) {
                 seedInfoLabel.setText("");
                 Controllers.dialog(i18n("qinglan.sync.fetch.failed",
@@ -560,6 +564,18 @@ public class QLSyncPage extends DecoratorAnimatedPage implements DecoratorPage, 
             seedStartButton.setDisable(false);
             checkPackUpdate();
         }).start();
+    }
+
+    /// Toggles the indeterminate progress row used while a check runs.
+    private void showIndeterminateProgress(boolean visible) {
+        progressBar.setVisible(visible);
+        progressBar.setManaged(visible);
+        progressLabel.setVisible(visible);
+        progressLabel.setManaged(visible);
+        if (visible) {
+            progressBar.setProgress(-1);
+            progressLabel.setText(i18n("qinglan.sync.checking"));
+        }
     }
 
     /// @return the human message of an exception, falling back to its string form
