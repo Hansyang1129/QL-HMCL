@@ -298,6 +298,12 @@ public class QLSyncPage extends DecoratorAnimatedPage implements DecoratorPage, 
                     if (outcome.upToDate()) {
                         statusLabel.setText(i18n("qinglan.rpu.upToDate", outcome.latest()));
                         applyButton.setDisable(true);
+                    } else if (outcome.pending() > 0 && outcome.latest().equals(outcome.installed())) {
+                        // Same release id but the cache itself is incomplete: the id alone is
+                        // not an update check, so the objects were verified too.
+                        statusLabel.setText(i18n("qinglan.rpu.damaged",
+                                String.valueOf(outcome.pending())));
+                        applyButton.setDisable(false);
                     } else {
                         statusLabel.setText(i18n("qinglan.rpu.versions",
                                 outcome.installed() == null ? "?" : outcome.installed(), outcome.latest()));

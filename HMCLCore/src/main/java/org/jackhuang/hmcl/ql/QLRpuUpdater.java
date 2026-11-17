@@ -36,9 +36,11 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.function.BiConsumer;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -86,10 +88,11 @@ public final class QLRpuUpdater {
     /// @param objects   objects the release lists
     /// @param downloaded objects fetched in this run
     /// @param unchanged objects already cached
+    /// @param pending   objects still missing or damaged in the local cache
     /// @param failed    objects that could not be fetched
     /// @param failedIds ids of the failed objects
     public record Outcome(@Nullable String installed, String latest, boolean upToDate, int objects,
-                          int downloaded, int unchanged, int failed,
+                          int pending, int downloaded, int unchanged, int failed,
                           @Unmodifiable List<String> failedIds) {
     }
 
@@ -134,7 +137,8 @@ public final class QLRpuUpdater {
         }
     }
 
-    /// Checks the backend for the newest resource-pack release without touching the cache.
+    /// Checks the backend for the newest resource-pack release **and** verifies the local cache
+    /// when both ids match: a release id alone says nothing about missing or corrupted objects.
     public static Outcome check(Path gameDir, String minecraftVersion) throws IOException {
         String modVersion = installedModVersion(gameDir);
         if (modVersion == null)
@@ -142,7 +146,23 @@ public final class QLRpuUpdater {
         QLRpuClient client = QLRpuClient.open(minecraftVersion, modVersion);
         String latest = client.latestReleaseId();
         String installed = installedReleaseId(gameDir);
-        return new Outcome(installed, latest, Objects.equals(installed, latest), 0, 0, 0, 0, List.of());
+        if (!Objects.equals(installed, latest))
+            return new Outcome(installed, latest, false, 0, 0, 0, 0, 0, List.of());
+
+        QLRpuClient.Manifest manifest = client.manifest(latest);
+        List<QLRpuClient.Entry> entries = manifest.objects();
+        Path objects = gameDir.resolve(CACHE).resolve("objects");
+        Set<String> validIds = new HashSet<>();
+        for (QLRpuClient.Entry entry : entries) {
+            if (matches(objects.resolve(entry.objectId() + ".obj"), entry.cipherSha256()))
+                validIds.add(entry.objectId());
+        }
+        int pending = 0;
+        for (int from = 0; from < entries.size(); from += CHECK_BATCH) {
+            int to = Math.min(from + CHECK_BATCH, entries.size());
+            pending += client.requiredObjects(latest, entries.subList(from, to), validIds).size();
+        }
+        return new Outcome(installed, latest, pending == 0, entries.size(), pending, 0, 0, 0, List.of());
     }
 
     /// Refreshes the RPU cache to the newest release.
@@ -159,7 +179,7 @@ public final class QLRpuUpdater {
         String latest = client.latestReleaseId();
         String installed = installedReleaseId(gameDir);
         if (Objects.equals(installed, latest))
-            return new Outcome(installed, latest, true, 0, 0, 0, 0, List.of());
+            return new Outcome(installed, latest, true, 0, 0, 0, 0, 0, List.of());
 
         Path cache = gameDir.resolve(CACHE);
         Path objects = cache.resolve("objects");
@@ -170,7 +190,7 @@ public final class QLRpuUpdater {
 
         QLRpuClient.Manifest manifest = client.manifest(latest);
         List<QLRpuClient.Entry> entries = manifest.objects();
-        java.util.Set<String> validIds = new java.util.HashSet<>();
+        Set<String> validIds = new HashSet<>();
         for (QLRpuClient.Entry entry : entries) {
             if (matches(objects.resolve(entry.objectId() + ".obj"), entry.cipherSha256()))
                 validIds.add(entry.objectId());
@@ -244,7 +264,7 @@ public final class QLRpuUpdater {
         if (failed == 0)
             writeAtomically(cache.resolve(CURRENT), envelope.getBytes(StandardCharsets.UTF_8));
 
-        return new Outcome(installed, latest, false, entries.size(), downloaded, unchanged, failed,
+        return new Outcome(installed, latest, false, entries.size(), 0, downloaded, unchanged, failed,
                 List.copyOf(failedIds));
     }
 
