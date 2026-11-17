@@ -57,11 +57,15 @@ public final class QLSyncState {
     /// Version of the modpack this state belongs to, as published in the applied manifest.
     public @Nullable String packVersion;
 
-    /// Manifest URL discovered or entered by the user; reused by update checks.
+    /// Legacy field from the removed manifest-JSON engine; read-only for compatibility.
     ///
-    /// <p>Kept per instance so the whole Qinglan setup travels with the game directory.
-    /// Blank or {@code null} falls back to {@link QLConstants#DEFAULT_MANIFEST_URL}.</p>
+    /// <p>The current engine is driven by the pack file itself, see {@link #packUrl}.</p>
     public @Nullable String manifestUrl;
+
+    /// Update source of this instance: the {@code .mrpack} URL (or {@code file:} URI) the pack
+    /// was applied from. {@code null} means the user has to pick the pack file again -- the
+    /// launcher deliberately bakes no remote address into its builds.
+    public @Nullable String packUrl;
 
     /// Channel that is currently active: {@code std} or {@code pfm}.
     public String activeChannel = "std";
