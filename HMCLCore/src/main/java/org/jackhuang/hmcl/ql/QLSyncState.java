@@ -73,6 +73,11 @@ public final class QLSyncState {
     /// Optional-mod groups currently enabled by the user.
     public List<String> enabledOptional = new ArrayList<>();
 
+    /// Whether {@link #enabledOptional} reflects a real decision yet. A fresh instance has
+    /// none, so the first apply ships every group enabled; after that an absent group means
+    /// the user disabled it (an empty list is a decision, not a missing record).
+    public boolean optionalRecorded;
+
     /// Files that the last-applied manifest installed: channel name to logical path to SHA-1.
     public Map<String, Map<String, String>> tracked = new LinkedHashMap<>();
 

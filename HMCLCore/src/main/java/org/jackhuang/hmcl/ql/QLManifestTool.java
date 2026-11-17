@@ -76,13 +76,12 @@ import static org.jackhuang.hmcl.util.logging.Logger.LOG;
 /// {@code servers.dat}, {@code modrinth.index.json} and
 /// {@code fabric-loader-}/{@code fabric-api} leftovers are never published.</p>
 ///
-/// <p><b>Resource packs are not this launcher's business.</b> The pack ships the in-game
-/// {@code QingLanRPUClient} mod, which keeps its own store under {@code qlrpu/}
-/// ({@code cache/current.json} plus encrypted {@code cache/objects/*.obj}) and mounts the
-/// packs virtually at runtime; its settings file {@code config/qlrpu-client.json} is its
-/// own too. Those paths, and any {@code resourcepacks/**} content, are counted and
-/// reported as {@code RPU} instead of being published. Shaders are different: they are
-/// part of the minimal mrpack and join the {@code common} channel like the mod configs.</p>
+/// <p><b>What the RPU client owns.</b> The pack ships the in-game {@code QingLanRPUClient}
+/// mod, which keeps its own store under {@code qlrpu/} ({@code cache/current.json} plus
+/// encrypted {@code cache/objects/*.obj}) and its own settings file
+/// {@code config/qlrpu-client.json}; those are counted and reported as {@code RPU} instead
+/// of being published. Resource packs and shaders are different: the pack still ships some
+/// optional ones, so they join the {@code common} channel like the mod configs.</p>
 @NotNullByDefault
 public final class QLManifestTool {
 
@@ -92,9 +91,10 @@ public final class QLManifestTool {
     private static final String DEFAULT_PACK_NAME = "Qinglan-2nd";
     private static final String DEFAULT_PACK_VERSION = "26.8.1";
 
-    /// Override folders distributed as common files: the mods' configs and the shader packs
-    /// (shaders are part of the minimal mrpack; resource packs are not, see {@link #RPU_FOLDERS}).
-    private static final List<String> COMMON_FOLDERS = List.of("config", "shaderpacks");
+    /// Override folders distributed as common files: mods' configs, shader packs and the
+    /// optional resource packs the pack still ships (the RPU client only owns its own store,
+    /// see {@link #RPU_FOLDERS}).
+    private static final List<String> COMMON_FOLDERS = List.of("config", "shaderpacks", "resourcepacks");
 
     /// Folders owned by the in-game RPU mod; never published by this launcher.
     private static final List<String> RPU_FOLDERS = List.of("resourcepacks", "shaderpacks");

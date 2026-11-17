@@ -147,7 +147,7 @@ public final class QLPackSync {
         }
         // A fresh instance has no optional record yet: apply the pack as shipped. Once the
         // record exists, an absent group means the user disabled it.
-        boolean respectsOptionalRecord = !existing.enabledOptional.isEmpty();
+        boolean respectsOptionalRecord = existing.optionalRecorded || !existing.enabledOptional.isEmpty();
         Set<String> enabledGroups = new LinkedHashSet<>();
         Set<String> allGroups = new LinkedHashSet<>();
 
@@ -236,6 +236,7 @@ public final class QLPackSync {
         existing.activeChannel = QLManifest.CHANNEL_MODS;
         existing.replaceTracked(tracked);
         existing.enabledOptional = new ArrayList<>(enabledGroups.isEmpty() ? allGroups : enabledGroups);
+        existing.optionalRecorded = true;
         existing.packVersion = manifest.packVersionOrDefault();
         if (packUrl != null)
             existing.packUrl = packUrl.isBlank() ? null : packUrl.trim();

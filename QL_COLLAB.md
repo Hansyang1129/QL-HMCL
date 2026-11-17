@@ -506,3 +506,14 @@ Git 身份（repo 本地）：`tux106` / `tux106@qq.com`。commit 规约：`feat
 - i18n：`seed.start`→`seed.apply`（导入/更新此实例），`seed.importing`/`seed.done` 文案改口径，新增 `seed.updated`；删掉 `seed.instance`/`seed.nameMissing`/`seed.seeding`/`seed.doneToast`（en/zh_CN/zh 三处同步；注意该门禁连 zh 也禁止全角括号）。
 - 测试：新增 `QLPackImporterTest`（过期 mod 覆盖、缺失 config 写入、resourcepacks 不落地、state 记录、二次运行幂等、null 源不覆盖已记录地址）。
 - 门禁：ql **60 例** · `checkTranslations` · `compileJava` · 四个 checkstyle 任务全绿。
+
+## 续20（2026-11-17）：引擎重写为 pack 驱动 + 资源包归属修正
+
+用户判定：① 更新路径就是 `.mrpack` 本身（不是我再发明的 manifest.json）；② **资源包分两份**——`qlrpu/` 归 RPU 客户端，`resourcepacks/` 归 `.mrpack`（有些可选资源包就是从这里更新的，「到时候删再说，现在要有」）；③ 光影本来就归 `.mrpack`。
+
+- **新引擎 `QLPackSync`**（取代 `QLSyncManager`/`QLSeedImporter`/`QLPackImporter`/`QLManifestFetcher`，四个类连同测试与 E2E harness 已删）：读 pack 的 `modrinth.index.json` + `overrides/**`，逐条 SHA-1 对账；一致不动、有孪生一致则改名接管、缺/旧则从 overrides 取或按 URL 下载（下完校验 sha1，不符删除并记失败）；包里不再列出的旧 tracked 文件**删除**（RPU 目录的只移交）；可选组：首跑全开，之后按 state 记录（`optionalRecorded` 区分「没记录」与「全关」）；结束写 state（tracked/packVersion/packUrl）+ 重刷 dblpack。
+- **归属最终版**：RPU 拥有 `qlrpu/**` + `config/qlrpu-client.json`；`.mrpack` 拥有 `mods/**`、`config/**`（RPU 配置除外）、`shaderpacks/**`、`resourcepacks/**`、`options.txt`。
+- **同步页**：不再有清单地址/联网取清单；流程 = 选/缓存 `.mrpack` → 检查更新（读包内版本对比 state）→ 下载并应用（`QLPackSync.sync`）；仍受 `QingLanRPUClient` 门禁约束；可选组勾选会写回 state。
+- **RPU 下载 API 已解析**（供后端对接）：`POST /sessions` → `GET /releases/latest` → `GET /releases/{id}/manifest`（Ed25519 签名 payload，packs→files 带 objectId/cipher/plain sha256）→ `GET /sources?releaseId=` → `POST /releases/{id}/check` → `POST /download-tickets` → 按 ticket URL 下密文对象；headers：`User-Agent: QingLanRPU/1.0 protocol/1`、`Authorization: Bearer …`。
+- 测试：`QLPackSyncTest`（应用/幂等、删除多余、可选组停放）+ `QLManifestToolTest.keepsPacksAndShadersInThePack`；ql 共 47 例。
+- 门禁：ql 47 例 · `checkTranslations` · `compileJava` · 四个 checkstyle 全绿。

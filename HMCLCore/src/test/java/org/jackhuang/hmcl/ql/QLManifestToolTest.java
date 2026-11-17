@@ -74,10 +74,10 @@ public final class QLManifestToolTest {
                 "the overrides payload must join common and must not repeat index paths");
     }
 
-    /// Resource packs and shaders belong to the in-game RPU mod, so the launcher manifest must
-    /// stay a mods-and-configs-only channel: neither may leak into it.
+    /// The RPU client owns only its own store and settings; resource packs and shaders still
+    /// belong to the pack, because optional packs are updated through it.
     @Test
-    public void leavesResourcePacksToTheRpuMod() throws IOException {
+    public void keepsPacksAndShadersInThePack() throws IOException {
         byte[] mod = utf8("mod");
         byte[] config = utf8("config");
         byte[] pack = utf8("pack");
@@ -93,10 +93,10 @@ public final class QLManifestToolTest {
 
         JsonObject channels = manifest.getAsJsonObject("channels");
         assertEquals(List.of("mods/a.jar"), entriesOf(channels.getAsJsonObject("std").getAsJsonArray("mods")));
-        assertEquals(List.of("config/a.toml", "shaderpacks/S.zip"),
+        assertEquals(List.of("config/a.toml", "resourcepacks/RP.zip", "shaderpacks/S.zip"),
                 entriesOf(channels.getAsJsonObject("common").getAsJsonArray("files")),
-                "shaders belong to the minimal mrpack; resource packs, qlrpu and the RPU "
-                        + "client's own config stay out");
+                "packs and shaders ship with the pack; only qlrpu and the RPU client's own "
+                        + "config stay out");
     }
 
     private static String indexJson(List<JsonObject> files) {

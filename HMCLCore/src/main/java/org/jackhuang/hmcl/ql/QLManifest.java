@@ -91,15 +91,10 @@ public final class QLManifest {
     public static final String CHANNEL_COMMON = "common";
 
     /// Folders the in-game RPU mod owns. The launcher never downloads, tracks or deletes
-    /// files there:
-    /// <ul>
-    ///     <li>{@code qlrpu} — the client's own store: {@code cache/current.json} (signed
-    ///     release payload) and {@code cache/objects/*.obj} (encrypted, hundreds of MB);</li>
-    ///     <li>{@code resourcepacks} — packs are mounted virtually at runtime by that mod,
-    ///     so the launcher has no business writing them. Shaders are <em>not</em> in this
-    ///     list: they belong to the minimal {@code .mrpack} and are synced normally.</li>
-    /// </ul>
-    public static final List<String> RPU_FOLDERS = List.of("qlrpu", "resourcepacks");
+    /// files there: {@code qlrpu} is the client's own store ({@code cache/current.json} plus
+    /// encrypted {@code cache/objects/*.obj}). Resource packs are <em>not</em> in this list:
+    /// the {@code .mrpack} still ships some optional packs and the launcher syncs them.
+    public static final List<String> RPU_FOLDERS = List.of("qlrpu");
 
     /// Individual files inside launcher-owned folders that still belong to the RPU client,
     /// because it is the only writer of its own settings.
