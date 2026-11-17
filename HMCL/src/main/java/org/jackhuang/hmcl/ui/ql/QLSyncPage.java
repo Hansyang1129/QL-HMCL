@@ -36,7 +36,6 @@ import org.jackhuang.hmcl.modpack.Modpack;
 import org.jackhuang.hmcl.modpack.modrinth.ModrinthModpackProvider;
 import org.jackhuang.hmcl.ql.QLPackGuard;
 import org.jackhuang.hmcl.ql.QLPackSync;
-import org.jackhuang.hmcl.ql.QLRpuUpdater;
 import org.jackhuang.hmcl.ql.QLSyncState;
 import org.jackhuang.hmcl.setting.GameDirectoryManager;
 import org.jackhuang.hmcl.task.Schedulers;
@@ -73,7 +72,6 @@ public class QLSyncPage extends DecoratorAnimatedPage implements DecoratorPage, 
             new ReadOnlyObjectWrapper<>(State.fromTitle(i18n("qinglan.sync.title")));
 
     private final Label instanceLabel = new Label();
-    private final JFXButton checkUpdateButton = FXUtils.newRaisedButton(i18n("qinglan.rpu.update"));
     private final Label statusLabel = new Label();
     private final Label progressLabel = new Label();
     private final ProgressBar progressBar = new ProgressBar();
@@ -95,10 +93,6 @@ public class QLSyncPage extends DecoratorAnimatedPage implements DecoratorPage, 
     private boolean syncable;
 
     public QLSyncPage() {
-        HBox actionsRow = new HBox(16, checkUpdateButton);
-        actionsRow.setAlignment(Pos.CENTER_LEFT);
-        checkUpdateButton.setOnAction(e -> applyUpdate());
-
         seedStartButton.setDisable(true);
         seedChooseButton.setOnAction(e -> chooseSeedFile());
         seedStartButton.setOnAction(e -> applyPackUpdate());
@@ -109,10 +103,9 @@ public class QLSyncPage extends DecoratorAnimatedPage implements DecoratorPage, 
 
         VBox content = new VBox(12,
                 createTitleLabel(i18n("qinglan.sync.instanceTitle")), instanceLabel, gateLabel,
-                createTitleLabel(i18n("qinglan.rpu.title")), actionsRow, statusLabel,
                 createTitleLabel(i18n("qinglan.sync.seed.title")), new VBox(8, seedInfoRow, seedRow),
                 createTitleLabel(i18n("qinglan.sync.optional")), optionalBox,
-                progressLabel, progressBar);
+                statusLabel, progressLabel, progressBar);
         content.setPadding(new Insets(16));
         content.setFillWidth(true);
 
@@ -180,8 +173,6 @@ public class QLSyncPage extends DecoratorAnimatedPage implements DecoratorPage, 
         gateLabel.setManaged(!syncable);
         gateLabel.setWrapText(true);
         gateLabel.setStyle("-fx-text-fill: -monet-error;");
-
-        checkUpdateButton.setDisable(!syncable);
     }
 
     /// Loads the per-instance state for the currently selected instance asynchronously and
@@ -250,83 +241,6 @@ public class QLSyncPage extends DecoratorAnimatedPage implements DecoratorPage, 
         if (repository == null || !repository.isLoaded())
             return null;
         return repository.getSelectedInstance();
-    }
-
-    /// Runs the RPU update pipeline in the launcher: the same phases the in-game client runs
-    /// (release, manifest, source, object check, tickets, encrypted objects) and the same
-    /// progress semantics, with the release only advertised once everything verified.
-    private void applyUpdate() {
-        if (busy)
-            return;
-
-        refreshInstanceHint();
-        Path directory = runDirectory;
-        if (directory == null) {
-            Controllers.dialog(i18n("qinglan.sync.instance.none"), i18n("message.error"),
-                    MessageDialogPane.MessageType.ERROR);
-            return;
-        }
-        if (!syncable) {
-            Controllers.dialog(i18n("qinglan.sync.notSyncable"), i18n("message.error"),
-                    MessageDialogPane.MessageType.ERROR);
-            return;
-        }
-        String gameVersion = instanceGameVersion();
-        if (gameVersion == null) {
-            Controllers.dialog(i18n("qinglan.rpu.noVersion"), i18n("message.error"),
-                    MessageDialogPane.MessageType.ERROR);
-            return;
-        }
-
-        busy = true;
-        checkUpdateButton.setDisable(true);
-        seedChooseButton.setDisable(true);
-        seedStartButton.setDisable(true);
-        progressBar.setVisible(true);
-        progressBar.setManaged(true);
-        progressBar.setProgress(-1);
-        progressLabel.setVisible(true);
-        progressLabel.setManaged(true);
-        progressLabel.setText(i18n("qinglan.rpu.downloading"));
-
-        Task.supplyAsync(Schedulers.io(), () -> QLRpuUpdater.update(directory, gameVersion,
-                        (finished, total) -> runInFX(() -> {
-                            if (total > 0) {
-                                progressBar.setProgress((double) finished / total);
-                                progressLabel.setText(i18n("qinglan.sync.progress", finished, total));
-                            }
-                        })))
-                .whenComplete(Schedulers.javafx(), (outcome, exception) -> {
-                    busy = false;
-                    checkUpdateButton.setDisable(!syncable);
-                    seedChooseButton.setDisable(false);
-                    seedStartButton.setDisable(selectedPack() == null);
-                    progressBar.setVisible(false);
-                    progressBar.setManaged(false);
-                    progressLabel.setVisible(false);
-                    progressLabel.setManaged(false);
-                    if (exception != null || outcome == null) {
-                        Controllers.dialog(i18n("qinglan.rpu.error", exception == null
-                                        ? i18n("message.unknown") : describe(exception)),
-                                i18n("message.error"), MessageDialogPane.MessageType.ERROR);
-                        return;
-                    }
-                    if (outcome.upToDate()) {
-                        statusLabel.setText(i18n("qinglan.rpu.upToDate", outcome.latest()));
-                    } else if (outcome.failed() > 0) {
-                        statusLabel.setText(i18n("qinglan.rpu.versions",
-                                outcome.installed() == null ? "?" : outcome.installed(), outcome.latest()));
-                        Controllers.dialog(i18n("qinglan.rpu.partial",
-                                        String.valueOf(outcome.downloaded()), String.valueOf(outcome.failed())),
-                                i18n("message.warning"), MessageDialogPane.MessageType.WARNING);
-                    } else {
-                        statusLabel.setText(i18n("qinglan.rpu.updated", outcome.latest(),
-                                String.valueOf(outcome.downloaded())));
-                        Controllers.showToast(i18n("qinglan.rpu.updated", outcome.latest(),
-                                String.valueOf(outcome.downloaded())));
-                    }
-                })
-                .start();
     }
 
     /// Reads the picked pack and reports whether the instance is behind it.
@@ -428,7 +342,6 @@ public class QLSyncPage extends DecoratorAnimatedPage implements DecoratorPage, 
         busy = true;
         seedChooseButton.setDisable(true);
         seedStartButton.setDisable(true);
-        checkUpdateButton.setDisable(true);
         progressBar.setVisible(true);
         progressBar.setManaged(true);
         progressBar.setProgress(-1);
@@ -446,7 +359,6 @@ public class QLSyncPage extends DecoratorAnimatedPage implements DecoratorPage, 
                     busy = false;
                     seedChooseButton.setDisable(false);
                     seedStartButton.setDisable(selectedPack() == null);
-                    checkUpdateButton.setDisable(!syncable);
                     progressBar.setVisible(false);
                     progressBar.setManaged(false);
                     progressLabel.setVisible(false);
