@@ -365,3 +365,133 @@ Git 身份（repo 本地）：`tux106` / `tux106@qq.com`。commit 规约：`feat
 - 待办不变：正式资源服务器 URL、`servers[]` 消费、下拉色块之外的图标位。
 
 ## 续16（2026-10-21）：MTR 页美化（tag 药丸 / RadioChoiceList / 线色班次与站序链 / 删手写 style）
+
+## 续17（2026-10-21）—— 按用户 5 图重构：平台卡 × 3 班 / 线路卡 + 停靠王牌 / 逐站卡 / 1 web + 5 缓存
+
+- **path API 打通**：`POST /mtr/api/map/directions`，body `{"startTime":<epochMillis>,"startStationName":"...","endStationName":"..."}`；站名大小写不敏感，匹配全名或按 `|` 分段的任一部分。响应 `data.connections[]`（字段：`routeId`，空=步行；`start/endStationId` hex；`start/endPlatformName`；`startTime/endTime` epoch ms；`walkingDistance`）。**只返回一条路径**（连接数组即顺序 legs）。先前 `path` 端点是空壳（其他 name 也回占位），`directions` 才是真本体。QLMtr 新增两个 record：`MtrDirectionsLeg(ride/routeId/startEndStationId/startEndPlatformName/departure/arrival/walkingDistance)` 与 `MtrDirections(time, legs)`，`fetchDirections(fromName,toName)` POST，重试逻辑与 arrivals 相同。
+- **QLMtrRouter 三改**：
+  1. 换乘计数修正（图五吐槽）：tracePath 里步行腿不再 `transfers++`，改为 **ride→ride 且 routeId 变化才 +1**，与搜索用的 TRANSFER_PENALTY 判定同步（walk 前后的两次换线只算 1 次）。
+  2. 同线/同路段合并（图五吐槽）：签名从 routeId 改为 **`主名#number|from>to`** 行程序列——同 A→B 段多个平行交路（不同 routeId 同名）折叠为一条，保留最便宜者。
+  3. 新增 `directionsToPath(sar, directions, fromName, toName)`：把 web legs 映射成 MtrPath（站名查 SAR，空站 id 用起讫显示名兜底），total = 末腿 endTime − 首腿 startTime，换乘同 ride→ride 规则。
+- **图一**：`entryBody()` 加 `Insets(16)`（与二级页同），卡片不再顶到滚动条右缘。
+- **图二（按站台）**：`loadPlatformArrivals` 重写为**站台优先**——一次 `fetchArrivals(全线站组ids, 3)`，按 `platformId` 分组，每站台 = 一张卡：卡头 `qinglan.mtr.platform.tag`（站台 n），卡内排序取最近 **3 班**（`TRAINS_PER_PLATFORM=3`，替换原 KEPT_ARRIVALS_PER_PLATFORM=6）；行 = 原生 `arrivalRow()`（不再外套卡），无实时数据的站台直接不出卡（没标签没法立卡），全空回 no.arrivals。站台按标签数字排序（非数字排末尾）。渲染前 `stationPicker.selected()==null` guard 防 poll 竞态。
+- **图三（按线路）**：`loadStationRoutes` 重写——每条线路一张 `clickable` 卡：title=线名、subtitle=方向、色块=route.color()，**tag 药丸 = 近一班时间 + 本站停靠站台列表**（站台标签来自同一批 arrivals 的 platformName 映射；多条站台线在该站多个站台停靠时全部列）。数据源 = 批量 arrivals(maxCount=1) + nextAt(stopIndex) 兜底。渲染前同样有 selected guard。
+- **图四（线路时刻表）**：`renderRouteTimetable` 重写为**逐站卡片**：顶部线路 header 卡，然后按站序每站一张卡：title=站名、swatch=route.color、tag=近一班（优先该站实时 arrivals 行的 arrival 时间 + 站台药丸；无实时用 `nextAt(packs, route, i)` 兜底；两者皆无 → no.timetable）。stopChain/stopRow/stopLink 全删（被逐站卡取代）；`qinglan.mtr.departures`/`qinglan.mtr.stops` 两个键 ×3 语言删除（页面已不引用）；`KEPT_DEPARTURES`/`CLOCK` 的 DEPARTURE_TIME/clockText 一并删。poll 竞态 guard：`routePicker.selected() != route` 直接丢弃结果。
+- **图五（路径规划）**：`runPathQuery` 合一 Task：web `fetchDirections`（**异常吞掉置 null，离线也能继续**）+ 本地 `findPaths(…,KEPT_PATHS=5)` → PlanBundle(web, paths)；渲染 #1=web 卡（`planBlock(index, path, web=true)`，`qinglan.mtr.plan.web` 药丸），#2..=本地候选。web 空/失败 → 只剩本地 5 条；全空 → plan.none。
+- **i18n ×3**：改 hint ×2（route.timetable.hint=“按站序逐站展示最近一班与停靠站台”、plan.hint=“首条来自网页查询，另附本地缓存的最多 5 条方案”），新增 `qinglan.mtr.plan.web`（en `From the web` / zh_CN `网页查询` / zh `網上查詢`），删 departures/stops 两键；properties 重写后统一 LF + 末尾 0x0A（脚本 WriteAllLines 引入 CRLF 已回写）。
+- **QLMtrTest**：+3 用例（`parsesDirectionsReplyAndShapesIt` 打桩 `/mtr/api/map/directions` 校验解析与 directionsToPath 换乘/总和；`countsLineChangesWithoutWalkLegs` 换线无步行也计 1 次；`mergesParallelVariantsOfOneLine` 平行交路折叠为 1 条）。既有 `chargesTransfers…` 断言在新规则下不变（A-walk-B 计 1）。**门禁全绿**：checkTranslations + compileJava ×2 + ql tests（新 29 用例）+ makeExecutables；exe+jar（14:34，14239555/13785411 B）已投 F:\mc（无旧实例）。
+- **坑与风**：
+  - `WriteAllLines` 默认 CRLF，properties 会全线变体（git 警告同上）；回写用 `WriteAllText + 手动 -replace "\r\n","\n"`。
+  - web directions 请求不挂 `?dimension=` 也能用（服务器默认 0=overworld），QLMtr 里仍复用 `sarEndpoint()` 带上以求一致。
+  - 方案页 web 卡 total 是**服务器规划时钟**（start..end），与本地 Dijkstra 分钟数口径不同，用户在意的是可行性不必对齐。
+  - 平台卡/线路卡/逐站卡都发**批量 arrivals**（1 帧多平台），缓存 4s 吸收 20s 轮询。
+  - departuresData packs 缺失时逐站卡不再整页失败，仅各站显示 no.timetable。
+
+### 续17 追加（同日 14:48，用户截图勘误）
+- **勘误**：实测确认 SAR `routes[].stations[].name` 字段是**站台号**（"4"/"31R"…）而非车站名——上版图四把站台号当标题渲染（为什么截图里只见 4/6/4/3）。修复：`renderRouteTimetable` 逐站卡标题改用 `stop.stationId()` 反查 SAR 站表 `primaryName`（站表 id→名 map 一次构建，查不到回落站台号），**站台号药丸固定由 stop 记录给出**（不再依赖实时行）；header 卡不加站台药丸。
+- **图三同步简化**：`loadStationRoutes` 的"停靠站台"药丸直接走 stop 记录（去重保序），删掉了那次 maxCount=1 的批量 arrivals 请求，整个方法回到同步渲染。
+- **教训**：SAR 路线站点行的 `name` 语义是被站台号占用的（旧 stopChain 时代恰好把"站台号"当站名也是错的，只是车站名视觉上没被checks出来）；站名永远从 `stations[]` 表按 id 反查。
+- 门禁全绿，exe（14239437 B，14:48:44）+jar 已投 F:\mc。
+
+### 续17 追加2（同日 14:57，web 后处理 + API 查询开关）
+- **web 数据后处理**（`QLMtrRouter.directionsToPath` 内两遍清理）：
+  1. **同名站步行 drop**——起讫站名相同的步行（进站/站台换转/出站，SAR 站名按 id 反查后比较）不渲染，避免"蜗鸟岛 → 蜗鸟岛"这类噪音行；跨站步行保留（真换乘步行）。
+  2. **相邻同 routeId ride 合并**——网页把贯通服务按分段拆 connections（H4 段/L1 段/L2 段…），相邻且同线 ride 并回一条（名/色同、from 取第一段、to 取末段、时间求和）；合并/丢行后重算 transfers（仍 ride→ride 换线计数）。
+  3. `total` 不变（末腿 endTime − 首腿 startTime，含被 drop 步行的真实耗时）。
+- **启用API查询勾选**：planActions 行加原生 `JFXCheckBox`（`qinglan.mtr.plan.web.toggle`，en `Query the web`/zh_CN `启用API查询`/zh `啟用API查詢`），默认勾选；不勾 → `runPathQuery(false)` 直接跳过 fetchDirections，只出本地 5 条缓存方案。
+- **QLMtrTest** +1：`cleansSameStationWalksAndSplitRides`（st桩 6 腿：同名站步行被丢、同线两段合并 60000ms、换乘=1、total 117000 保持全程）。
+- 门禁全绿；exe（14240047 B，14:57:22）+jar 已投 F:\mc。
+### 续17 追加3：论坛/MTR 两页重构为原生“设置页”样式（15:25）
+- **指令**：参考实例设置页（左导航 + 右侧行区）重做论坛与 MTR 两页，用户确认“似乎这样更好点”。
+- **MTR 页（QLMtrPage）**：
+  - 删除一级入口与返回导航（View/entryBody/entryBlock/backRow/open 全拆），三个查询直接成为左侧 `AdvancedListBox` 侧栏 tab：分组“时刻表”下——车站时刻表（SVG.LISTS）、线路时刻表（SVG.TRIP）；分组“路径规划”下——路径规划（SVG.EXPLORE）。侧栏宽 200，`setLeft(sideBar)`。
+  - 中央 `TabHeader(contentPane, stationTab, routeTab, planTab)`（TransitionPane 仍在 spinnerPane 内），侧栏 `addNavigationDrawerTab` 双向接线；`select` 后监听 `tabHeader.getSelectionModel()` 驱动 `updatePoll()`（station/route 轮询、plan 关）。
+  - 各 tab 内容 = `tabBody(ClassTitle 标题 + 控件 + 结果区)` → `scroll()`；站点卡深链 `openRoutePage` 改为 `routePicker.pick + tabHeader.select(routeTab,false)`。头部刷新按钮+状态行保留，三 tab 共用。
+- **论坛页（QLForumPage）**：侧栏 tab 帖子列表（SVG.FORMAT_LIST_BULLETED）+ 底部工具条“刷新”（SVG.REFRESH，高 64）；`setLeft(sideBar, toolBar)`；详情仍走 contentPane 切换（listShown 守卫不变），点侧栏“帖子列表”即回列表。
+- **i18n**：新增 `qinglan.forum.posts` ×3（Post List / 帖子列表 / 帖子列表）。
+- **教训**：大段 replace 搬运时被移走的旧方法（card/clickable、Mode、planPickers/planActions）在别处仍被引用，漏搬即编译错；今后大重构拆小步，搬走前先 grep 引用点。
+- 门禁全绿；exe 14239747 B + jar 13785603 B（15:24:20）投递 F:\mc，无旧实例运行。### 续17 追加4：倒置英语（en-Qabs）缺字调查（15:47，结论存档，用户拍板暂不改码）
+- **现象**：语言选择列表“英语 (颠倒)”一项的本地名串出现豆腐块；映射文件 `HMCLCore/src/main/resources/assets/lang/upside_down.txt` 输出的目标码位多为生僻块（U+15FA/1614 加拿大音节字、U+1D37/1D1A 语音扩展、U+2C6F 扩展拉丁-C、U+A780/81 扩展拉丁-D、U+2132/2141 字形符号、U+27D8 数学、U+03DB/1F49 希腊、U+3123/3125 注音）。
+- **本机实测（JavaFX 21.0.8 + DirectWrite，探针程序截图验证）**：
+  1. 物理字体 family 下缺字 → **不存在逐字形系统回退**（A∩ 渲染、ᗺ ㄣ 全豆腐）；
+  2. `-fx-font-family` 逗号列表 **不支持**（整串当单个 family 名，解析失败回退 System）；
+  3. `Font.loadFont` 注册的字体 **不进回退链**（loadFont Gadugi 后 Tahoma 渲染 ᗺ 仍豆腐）；
+  4. 逻辑字体 "System" 只对注音等已定义文字块回退，生僻块一样豆腐。
+  5. 系统字体覆盖盘点：ᗺ/ᘔ 仅 Gadugi；⟘ 仅 Cambria/Segoe UI Symbol；ꞁ/ᵷ/ᴚ/Ɐ Calibri/Cambria/Segoe UI；ㄣ DengXian 系——无单一字体全覆盖。
+- **候选方案及弃置理由**：整窗 180° 旋转（效果最完整但改动面大）；内置合体字体+激活时整体换 family（物理字体无回退→动态中文内容豆腐、语言行混排仍两难）；仅修语言行 per-node 字体（切到该语言后界面其余仍豆腐）。**用户拍板维持现状**，本轮不改代码、不交付。
+- **将来重启的入口点**：`Translator_en_Qabs.translate`（映射+倒序）、buildSrc `CreateLocaleNamesResourceBundle`（本地名生成）、`StyleSheets.getFontStyleSheet`（data-URI CSS，单 family）、`FontManager`（font.ttf/HMCL_FONT/env 加载链）、设置页 `LineSelectButton<SupportedLocale>`（语言行渲染）、映射表自身。### 续17 追加5：论坛文章页原生表格 + 图片加载（17:10）
+- **用户报障**：整合包更新日志（整合包v26.8.x）的表格不显示（`<table>/<th>/<td>` 被 BLOCK 正则剥掉只剩文字）；随后又指出部分文章（如"方圆轨交"）有图片需要加载出来。
+- **真实样本核对**（直接打 Halo 内容 API 拉两篇）：表格结构 `<table><colgroup><col style="width:Npx">…<tbody><tr><th colspan=1 colwidth="N"><p>…</p></th>…`（整合包篇含 4 张表：16+4+2+3 行，colgroup/colwidth 提示齐全）；图片形如 `<img src="https://p3-flow-imagex-sign.byteimg.com/…&amp;…">`（外链 HTTPS 图床 + 签名参数，`&amp;` 实体必须解码否则 404）。
+- **QLForumPage 改动**：
+  - `BLOCK` 正则加入 `table`；`appendBlock` 新增 `case "table" -> tableOf(inner)`。
+  - `tableOf`：原生 GridPane 表格——列宽三路取值（colgroup px > 单元格 `colwidth` 属性 > 文字配重估算，CJK 双倍、上限 60）；表头行加粗且分隔线用 `-monet-outline`（粗 2px），正文行分隔线 `-monet-outline-variant`（1px），末行无线；每格 `flowOf` 富文本（链接/加粗/行内代码/图片都活），包进 launcher `card`。
+  - `TableRow` record（cells/hints/header）+ `TABLE_ROW/TABLE_CELL/TABLE_COL` 正则 + `parseRow/parseDoubleSafe/textWeight/boldify/card`。
+  - **无 thead 表**：整表无 `th` 时首行按表头处理。
+  - **图片**：`flowOf` 的 `img` 分支从链接占位改为 `imageNode(src)`——`Image(url, 560, 0, reserveRatio, bgLoading=true)` 后台加载并按宽 560 等比缩放解码（大图内存安全），`progressProperty` 监听完成后把占位链接换成 ImageView；出错则删缓存保留"图片"链接（浏览器兜底）。静态 `IMAGE_CACHE` LRU（LinkedHashMap accessOrder, 40 上限，synchronizedMap）。
+  - **顺手修 bug**：`appendBlock` 开头的跳过段原来把"仅含 img 的块"也整个丢弃（这正是方圆轨交图片完全消失的原因），改为只跳 hr/br；`attrOf` 增加 `decodeEntities`（`&amp;` 放最后防二次解码）。
+- **验证**：python 复刻同套正则跑两篇真实 HTML——表格行列/colwidth/图片 URL 全命中；门禁全绿；exe 14245627 B + jar 13791483 B（17:09:52）投递 F:\mc，无旧实例运行。
+### 续17 追加6：论坛文章图片不显示的真凶＝INLINE_TAG 不匹配 void 标签（17:25:44）
+- **用户报告**：追加5 交付后"方圆轨交"图片仍不显示；换测"南铁集团7.4运营调整"同样无声——**连"图片"占位链接都没有**。
+- **复抓真实正文对拍**（南铁篇 `019f139a-4a6f-73dc-819a-1d5a359c2dcd`）：图片为 `<figure data-content-type="image" …><img src="https://bee-reg-ab.imagency.cn/e/….png" width="1713px"></figure>`——Halo 正文 img 是**普通未闭合写法（无 `/` 自闭合、无 `</img>` 闭合标签）**。
+- **根因**：`INLINE_TAG` 尾部 `(?:/>|>(.*?)</\\1\\s*>)` 两个分支分别要求"自闭合斜杠"或"闭合标签"，void 标签 img/br 两者皆无 → 永不匹配；`<figure>` 又不在 BLOCK 交替里，整段落 GAP → appendBlock("p") → flowOf 走 appendPlain 只剩纯文本 → 图片彻底蒸发。离线 jshell 复现：**旧正则 img 命中=0**。前两处修复（appendBlock 跳过、decodeEntities）是真 bug 但非阻断主因。
+- **修复**：INLINE_TAG 尾部加第三个回退分支裸 `>`：`(?:/>|>(.*?)</\\1\\s*>|>)`——group(1) 结构不变（middle=null）；自闭合/配对优先故 `<a>`/`<strong>` 等配对标签行为不变（配对分支先试），a 的 null-middle 分支本就处理。
+- **验证（jshell 离线探针，喂真实文章 JSON）**：新正则每份正文拷贝 img 命中 1 ✓（JSON 中正文因 `content.content` 结构出现两份，客户端 Gson 只解析一份，无影响）；figure 落 GAP(194) → img 命中 → src 提取 ✓（运行时真实引号，attrOf 无碍）→ **至少必现"图片"占位链接**；合成回归 `<a>paired</a>`/`<strong>`/`<br>`/`<br/>`/未闭合 `<img …>` 全部 tag/middle 正确。探针目录已清理。
+- 门禁全绿 → 交付 F:\mc（exe 14245627 B / jar 13791483 B，17:25:44）。若再不显示则只剩网络层（届时占位链接应可见，点击可开浏览器兜底）。
+
+### 续17 追加7：按外部审查报告（CODE_REVIEW_2026-10-21.md）修复，P0–P1 全部落地（19:32:20 交付第一轮）
+- **前情**：`CODE_REVIEW_2026-10-21.md`（外部审查，未跟踪不入库）开列 S1–S8/M1–M20；用户拍板「全部 P0–P3」+「先提交旧工作、按批 commit」。抽查 9 处（S1–S8、M11、M15/S7）行号全准。批次0 先把 1063 行旧工作提交 `5eb4565dc`，顺手修 QL_COLLAB 漂移（L145 ①/⑤ 标已解决、L261 ① 标已解决）。
+- **P0-1 `474ab2625`**：S2 重复 index path 补 `{ continue; }`＋`buildFromMrpack` 改包可见做测试缝＋新 `QLManifestToolTest.duplicateIndexPathIsEmittedOnce`；S5 MTR arrivals 缓存键并入 `#maxCountPerPlatform`（QLMtrTest maxCount=10 再发请求）；M11 `message.done`→`message.success`。
+- **P0-2 `d81ada0c5`**：S1 probeHttp 重写（真 getResponseCode、4xx 读 errorStream、非 HTTP(S) 拒绝、timeoutMs 覆盖 connect/read、跟随重定向）；S4 pingSlp 加 `MAX_RESPONSE_BYTES=1MB` + 欠流/超界/截断三个坏包测试（本地 HttpServer 200/404/malformed/file: 全测）。
+- **P1-1 `9084b9d9d`**：S6 `volatile boolean visible` 守卫状态页 timer 不越页续命；S7 删 openRoutePage 末尾重复 renderRoutePage；S8+M20 adoptInstance 目录查重 + 监听器 pin `getSelectedRepository()` + AtomicBoolean 一次性。
+- **P1-2 `9cc4c0da0`**：QLMtrPage 三视图各自代际令牌（stationArrivals/routeTimetable/plan）+ planning 连点保护 + arrivalsInFlight 只拦轮询；station 回调值等比较、route 回调 equals 比较且 header+行合并一次 setAll 防重复卡。
+- **P1-3 `cbf4a37a7`**：S3 `QLDirectoryLayout.recover` 顶部落 marker 优先（stale record 警告并改信磁盘），seedize 先 detect 再 recover、种子目标仅在全新目录生效——杜绝「marker=std 的目录被 pfm 种子重戳/混内容」；M3 种子单文件哈希失败按 MISMATCH 容错继续（新 `reconcileForSeedSoftly`），不丢已备结果。新增测试 `recoverKeepsTheStampedMarker` + `seedizeKeepsTheStampedChannel`。
+- **教训**：detectActiveChannel(gameDir) 在无 mods 文件夹时返回 null，直接当 recorded 传 recover 会把全新 pfm 目标落到 std——须 `detected != null ? detected : channel`；测试里写 mods 子目录文件前要先 createDirectories。
+- 门禁全绿 → **第一轮交付 F:\mc**（exe 14247704 B / jar 13793560 B，19:32:20），无旧实例运行。
+- **待做**：P2＝M12/M13/M14（QLSyncPage 按钮恢复、PageAware+URL 清 fetchedManifest、load/save 挪 IO）、M18/M19/M17（QLForumPage listShown 推导+moreRow、内链 scheme 白名单、图片完成摘监听）、M1/M2/M4/M6/M7（envelope 校验收敛、arrivals null 安全、toURIOrNull、RSS 兜底+死代码、permalink startsWith）；P3＝M8（///注释）、M9（测试类 @NotNullByDefault）、M10（System.err→Logger）、§4 轻微项、§5 测试缺口（QLSyncE2E→@Test、QLPinyin 多音字）。
+
+### 续17 追加8（外部审查报告 P2+P3 全部关闭，第二轮交付）
+
+- **前置**：追加7 的六连提交（P0/P1）后，P2 三批 + P3 一批全部完成并提交。
+- **P2-1 `0a675c592`（QLSyncPage live sync）**：M12 种子导入链 `whenComplete` 恢复 applyButton；M13 `implements PageAware`——`onPageShown` 调 `refreshInstanceHint()` 且清 `fetchedManifest` 并禁用 apply，URL 编辑监听同效；M14 `loadInstanceStateAsync(Consumer<@Nullable QLSyncState>)`——IO 线程 load、FX 线程回调，`saveManifestUrl` 全程 IO + 失败回落空态，checkUpdate 链式 load→fetch，applyUpdate 完成后的状态重载也下 IO（内层变量改名 `reloadException` 避免遮蔽）。教训：`Task.supplyAsync` 的 lambda 可直接抛受检异常；大段 edit 曾吞掉 refreshInstanceHint——大编辑后必须编译验证。
+- **P2-2 `2f6fe38d8`（QLForumPage）**：M18 `listShown()` 派生（`contentPane.getCurrentNode() == listPane`），删字段与双写；`moreRow` 字段 `indexOf` 插拔，非 RSS 分支 `finished = size < PAGE_SIZE`；M19 linkNode 仅 http/https 可点，否则纯文本无手型光标；M17 图片监听器自摘——`imageSettled` helper + 匿名 `ChangeListener` 内 `removeListener(this)`（lambda 自引用编译报「可能尚未初始化变量」，须用匿名类）。
+- **P2-3 `d1b6decfd`（core parsers）**：M1 `parse()` envelope 校验（缺 data → `IOException("(code=...)")`）；M2 cars 脏行跳过；M4 `NetworkUtils.toURIOrNull` + `Invalid download URL for ...`；M5 sync javadoc 如实（reports 无中间进度）；M6 RSS permalink 收敛单分支（localhost 特判并入通用逻辑）；M7 `fetchArticleFromPage` 仅 `/archives/`。测试 `rejectsErrorEnvelopesWithoutData`/`skipsMalformedCarEntries`；教训：MTR arrivals 静态缓存键＝站 id+maxCount，测试须用唯一站 id 防串扰。
+- **P3-1 `7da840d2b`（评审收尾）**：M8 全量 `///` 注释转换（12 主类 + 三个测试类）并修复批量转换丢缩进问题（按块后首个代码行缩进补齐；`{ @code mods/** }` 类文档通配符文本正确保留）；M9 `QLServerStatusTest`/`QLSyncE2E` 补 `@NotNullByDefault`；M10 `QLManifestTool` 六处 `System.err` → `Logger.LOG`（main catch 与 validate 失败走 `LOG.error`、其余 `LOG.warning`；`System.out` 是 CLI 报表，保留）；§4/§5：QLSyncPage 四处 assert 渐改显式判空（load 失败回落 empty 与 fetch/apply 失败路径一致）、`"unknown"`→`message.unknown`、种子 FileChooser 过滤器→`qinglan.sync.seed.filter`（EN/zh_CN/zh 三语言，nasyon 其他语言本就子集化）；QLSyncE2E 加 `@Test` 入口（`-Dql.syncE2EArgs` 提供真包 fixture 时跑同一场景链，缺件 skip——CI 有执行点但不再强制 fixture）；QLForumPage import 排序、`attrOf` Pattern 按属性名缓存、`decodeEntities` 先解数字实体（十/十六进制）再名实体补 `&apos;`、两处 `#4a90d9` → `-monet-primary`、java.time 收 import；QLConstants.WALL_CLOCK 共享 `HH:mm:ss`（MTR/论坛/状态页三处去重）；QLMtrPage `%06X` → `Locale.ROOT`。QLPinyinTest 新增八断言四用例（重庆多音、生僻与表外字、中英混排）。
+- **新一轮教训**：properties 文件是 LF——PowerShell 里用 `[Environment]::NewLine`（CRLF）找锚点会拿到 -1 把文件切坏（已 git 还原重做）；断言前先在 `pinyin.txt` 查表，际→J（南际 NJ 而非 NZ）、重→Z 开头（表序 zhong 先）。
+- 门禁：`checkTranslations :HMCLCore:test :HMCL:compileJava :HMCL:makeExecutables` 全绿（284 用例通过）。
+- **第二轮交付 F:\mc**：exe 14251538 B / jar 13797394 B（21:07:54）。
+- 至此外部审查报告 P0–P3 全部条目关闭，暂无已知未修项。
+
+### 续17 追加9（复审闭环：RSS 兜底 + seed 不可读两侧测试落位）
+
+- **触发**：复审版 `CODE_REVIEW_2026-10-21.md`（21:56，基于 `2a54e4240`）：主缺陷 33/33 已修确认；遗留 3 条轻微 + 2 条测试缺口 + §8 三处漂移。
+- **P2（指挥官定级：论坛唯一活路）`174c564c0`**：`QLForum` 增包私有 base 重载（公开方法委托 BASE）→ 新 `QLForumTest` 用本地假 Halo 站覆盖 RSS 兜底列表（绝对链接取路径、裸 host 落 "/" 不下溢、feed 像素剥除、无 title 条目跳过、空 feed、坏 feed 抛 IOException）+ 渲染页文章读取（非 /archives/ 前置拒绝、标题后缀剥离、缺 content 容器抛 IOException）。
+- **P3 seed 不可读（同 commit）**：`QLSeedImporterTest.unreconcilableSeedFilesStayUntracked` 走 softly 两个盲点：删除→missing、读拒绝（Windows ACL deny READ_DATA / POSIX 去 R 位，属性读保留让尺寸检查过、摘要阶段炸 IOException）→ mismatch；两者均不 tracked，随后 sync 直接收养（内容本已正确→ unchanged=1）。教训：`Files.isRegularFile` 只需 READ_ATTRIBUTES，deny 只 READ_DATA 才能精确命中摘要分支；平台忽略权限（root）时用「读到失败」探测自保。
+- **顺手**：`QLForumPage.PAGE_SIZE` / `QLMtrPage.KEPT_PATHS` 补 `///` 一行（复查点名的最后两个无文档常量）；QL_COLLAB §8 MTR 遗留条目刷新至当前事实（20s 轮询、三 tab 重渲、arrivalsCache 有界化、下拉色点均已落地）。L-c（FX 线程 stat）按复查口径保留为已记录、不改。
+- 门禁全绿；**第三轮交付 F:\mc**：exe 14251676 B / jar 13797532 B（22:55:48）。复审遗留至此全部处理完毕。
+- **2026-10-21（opencode/GLM）**：复审收尾两 commit（`174c564c0`/`4a1053c3e`，RSS 兜底+seed 不可读测试、§8 刷新、第三轮交付）；另按需求新增 `HMCL.sh`（Linux 启动脚本，仓库根）：定位同目录 `HMCL-*-ql2.jar`→ `JAVA_HOME`/`PATH`/常见 jvm 目录找 java → `exec java -jar`，git 以 x 位入库，已验证 jar 缺失退出与 java 探查分支，副本随 jar 放入 `F:\mc`。
+- **2026-10-21（opencode/GLM）**：MTR 页可读性修复（用户冒烟反馈「复选框文字消失」）：根因是启动器背景为用户自选图片，MTR 页内容区全透明，深色主题 `-monet-on-surface` 白字落在亮色区域即不可读（复选框「联网API查询」正压在亮色天空带上）。修复：`QLMtrPage` 根容器垫 `-monet-surface` 不透明表面（三个 tab + 顶栏整体受益）；论坛/状态/同步页同款「浮字」隐患保留待用户反馈再议。门禁全绿，第四轮交付 F:\mc。
+- **2026-10-21（续）**：按用户反馈把 MTR 页表面从全不透明 -monet-surface 调成 -monet-surface-transparent-80（HMCL 全主题动态生成的 80% 标准配方），背景隐约可见、白字仍可读。
+- **2026-10-22（追加10）**：复审闭环三连修（各一提交）：① size 软降级——shaMatches 对 size<=0 的清单条目跳过长度预检、仅按 SHA-1 证明（b01646853，sizeless 条目不再每次全量重下；boxed Long + validate 硬拒等服务端清单确认干净后再上）；② 部分失败提前 return 前先记 outcome.unchanged（4dc607820，packVersion 保持 null 是故意的：state 未提交时赋值会主动说谎，且 UI 版本号读 state 文件不读 outcome）；③ QLSyncState.save 走 .tmp + ATOMIC_MOVE（无 REPLACE 兜底时回退普通替换），失败清残留；load 对损坏 JSON 容错——改名 .corrupt 留现场后按空状态启动（只少删不乱删）（1c8d6ab60）。驳回并经审查者确认不改：purge 先于下载（desiredKeys 不交、天然安全）、RENAME 不计 unchanged（UI 单独显示）。备注：审查者引用的 429/730/1076 行号系 class 反汇编字节码偏移，非源码行号。
+- **2026-10-22（续）**：硬校验收紧（54059695c）：FileEntry.size 改 boxed @Nullable Long；fromJson 校验拒绝缺失/负 size，错误信息带 channel+path 便于定位坏条目；validateChannel 改 void 顺手去掉从未被使用的返回 Map。防拆箱 NPE：QLSyncManager.shaMatches 参数改 @Nullable Long（null/<=0 走 SHA-1，保留软降级护手装 manifest）；QLSeedImporter.reconcileForSeed 对 sizeless 条目明确退化为纯 SHA-1（seed 早于清单校验）。软降级临时测试退役，换代硬校验用例（缺 size、负 size 两例断言错误含 channel/path）。
+
+---
+
+## 12. 发布（GitHub）
+
+- **仓库**：<https://github.com/Hansyang1129/QL-HMCL>（`origin`）；`upstream` 远端仍指 HMCL-dev/HMCL，仅作来源参照，不跟更新。
+- **历史形态**：远端 `main` 是**源码快照 + 本项目提交**，作者只有维护者本人；上游作者署名写在 `README.md` 的「来源与署名」。完整上游历史只保留在本地分支 `archive/full-history` 与 `baseline-3164`，不推送。
+- **旧库**：`Hansyang1129/QL-HMCL-archive` 是重建前的仓库（含上游全史的悬空对象），可删可留。
+- **推送要点（本机）**：`git config http.sslBackend openssl`（schannel 报 `SEC_E_NO_CREDENTIALS`）；沙箱里 Git Credential Manager 起不来（`sh.exe` 无法建信号管道），推送时从 Windows 凭据管理器读 token，走一次性 `-c credential.helper=` 加 `http.https://github.com/.extraheader` 头认证，token 不落盘不打印。
+- **CI**：工作流保持上游原样 —— `mirror.yml` 有 `if: github.repository == 'HMCL-dev/HMCL'` 守卫（fork 上 skip）；`release.yml` 仅手动 + owner 守卫；实际会跑 `gradle.yml`（`./gradlew build`）与 `check-codes.yml`（checkstyle + checkTranslations）。本地门禁全绿，CI 预期同样绿。
+- **许可**：GPLv3，`README.md` 已注明「HMCL 修改版 / 非官方发行版」。
+
+## 续18（2026-11-17）：同步架构调整——单频道 + RPU 归属 + 实例门禁
+
+用户判定：① **资源包**由游戏内 RPU 客户端自己的机制更新（它有**自己的文件夹**，启动器不该管）；② 不再区分「优化包/标准包」，只保留一套 mods 清单；③ 同步页只对**带 `QingLanRPUClient` 的实例**开放（强制只匹配这个名字），其余提示「此实例不可同步」；④ 补充：**光影属于最小 `.mrpack` 的活**，照常同步。
+
+- **实测 RPU 的形态**（`F:\mc\.minecraft\versions\Qinglan-2nd-RPU\`）：`qlrpu/cache/current.json` 是 Ed25519 签名的 payload（`packs[]` 下 `files[]`，每项带 `objectId`/`plainSize`/`cipherSize`/`plainSha256`/`cipherSha256`）；`qlrpu/cache/objects/**.obj` 是密文对象（**6144 个，1396.6 MB**）；`qlrpu/cache/update.lock`；配置 `config/qlrpu-client.json`（apiBase/并发 3/保留 7 天/自动切源）；`fabric.mod.json`：id `qlrpu-client`、作者 MCBlocker、CC0、自称「资源包自动更新、密文缓存与流式虚拟资源包客户端」。**资源包运行时虚拟挂载，不落进 `resourcepacks/`**（该目录只有两个小包）。
+- **归属划分**（`QLManifest.RPU_FOLDERS` / `RPU_FILES` / `isRpuOwned`）：RPU 拥有 `qlrpu/**`、`resourcepacks/**`、`config/qlrpu-client.json` —— 发布器把它们计入报表 RPU 桶、不进清单（分类发生在路由**之前**，RPU 配置不会漏进 common）；同步引擎对这类路径直接跳过，已跟踪的旧文件只 untrack 不删除（`SyncOutcome.handedOver`，提示「资源包已交由游戏内 RPU 模组管理：N 个」）。**`shaderpacks/**` 留在 common**，与 mods 配置一起同步。
+- **单频道**：`MODS_CHANNELS` 收缩为 `{std}`（新增 `CHANNEL_MODS`）；`fromJson` 只要求 `std`+`common`；发布器不再产出 pfm；种子/同步统一 std；state 里遗留 pfm 跟踪项按「退役频道」移交（untrack 不删），`mods-pfm/` 目录原样保留。
+- **门禁 `QLPackGuard`**：只认文件名含 `QingLanRPUClient`（大小写不敏感、`*.jar`、排除 `*.jar.disabled`；`rpubridge`/`QLRPU-helper` 不算）；`QLSyncPage.refreshInstanceHint` 判定，非整合包实例禁用「检查更新/保存地址/下载并应用」并显示 `qinglan.sync.notSyncable`，实例行显示 RPU 文件名；删掉频道单选组与 4 个 `qinglan.sync.channel*` 键（含 yue/nan）。
+- 测试：新增 `QLPackGuardTest`（6 例）；`QLSyncManagerTest` RP 与 `qlrpu` 双移交；`QLManifestToolTest` 光影进 common、RP/qlrpu/RPU 配置不进；E2E 删 pfm 场景、common 期望 230；`QLSeedImporterTest` 计数与「退役 pfm 目录不动」断言更新；ACL 不可写环境里 seed 读拒绝分支改 assume 跳过。
+- 门禁：ql **59 例** · `checkTranslations` · `compileJava` · 四个 checkstyle 任务全绿。
