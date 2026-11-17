@@ -68,6 +68,13 @@ public final class QLRpuUpdater {
 
     private static final Gson GSON = new Gson();
 
+    /// Objects per {@code /check} request; the release lists thousands and the backend
+    /// rejects oversized bodies.
+    private static final int CHECK_BATCH = 400;
+
+    /// Objects per {@code /download-tickets} request.
+    private static final int TICKET_BATCH = 200;
+
     private QLRpuUpdater() {
     }
 
@@ -160,7 +167,6 @@ public final class QLRpuUpdater {
 
         // The envelope is stored verbatim: the in-game client verifies its signature itself.
         String envelope = client.manifestEnvelope(latest);
-        writeAtomically(cache.resolve(CURRENT), envelope.getBytes(StandardCharsets.UTF_8));
 
         QLRpuClient.Manifest manifest = client.manifest(latest);
         List<QLRpuClient.Entry> entries = manifest.objects();
@@ -169,7 +175,13 @@ public final class QLRpuUpdater {
             if (matches(objects.resolve(entry.objectId() + ".obj"), entry.cipherSha256()))
                 validIds.add(entry.objectId());
         }
-        List<String> required = client.requiredObjects(latest, entries, validIds);
+        // The check body carries every object of the release; a real pack has thousands of
+        // them, so it is asked in batches (the backend rejects oversized bodies with HTTP 413).
+        List<String> required = new ArrayList<>();
+        for (int from = 0; from < entries.size(); from += CHECK_BATCH) {
+            int to = Math.min(from + CHECK_BATCH, entries.size());
+            required.addAll(client.requiredObjects(latest, entries.subList(from, to), validIds));
+        }
 
         int total = required.size();
         int downloaded = 0;
@@ -187,7 +199,11 @@ public final class QLRpuUpdater {
                     break;
                 }
             }
-            List<QLRpuClient.Ticket> tickets = client.tickets(latest, sourceId, required);
+            List<QLRpuClient.Ticket> tickets = new ArrayList<>();
+            for (int from = 0; from < required.size(); from += TICKET_BATCH) {
+                int to = Math.min(from + TICKET_BATCH, required.size());
+                tickets.addAll(client.tickets(latest, sourceId, required.subList(from, to)));
+            }
             int finished = 0;
             for (QLRpuClient.Ticket ticket : tickets) {
                 QLRpuClient.Entry entry = entries.stream()
@@ -222,6 +238,11 @@ public final class QLRpuUpdater {
                     listener.accept(finished, total);
             }
         }
+
+        // Only advertise the new release once every object is in place: the in-game client
+        // trusts current.json and would otherwise mount a half-downloaded pack.
+        if (failed == 0)
+            writeAtomically(cache.resolve(CURRENT), envelope.getBytes(StandardCharsets.UTF_8));
 
         return new Outcome(installed, latest, false, entries.size(), downloaded, unchanged, failed,
                 List.copyOf(failedIds));
