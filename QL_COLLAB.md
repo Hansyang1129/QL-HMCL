@@ -517,3 +517,15 @@ Git 身份（repo 本地）：`tux106` / `tux106@qq.com`。commit 规约：`feat
 - **RPU 下载 API 已解析**（供后端对接）：`POST /sessions` → `GET /releases/latest` → `GET /releases/{id}/manifest`（Ed25519 签名 payload，packs→files 带 objectId/cipher/plain sha256）→ `GET /sources?releaseId=` → `POST /releases/{id}/check` → `POST /download-tickets` → 按 ticket URL 下密文对象；headers：`User-Agent: QingLanRPU/1.0 protocol/1`、`Authorization: Bearer …`。
 - 测试：`QLPackSyncTest`（应用/幂等、删除多余、可选组停放）+ `QLManifestToolTest.keepsPacksAndShadersInThePack`；ql 共 47 例。
 - 门禁：ql 47 例 · `checkTranslations` · `compileJava` · 四个 checkstyle 全绿。
+
+## 续21（2026-11-17）：交接待办——RPU 更新的归属未定
+
+接手人注意：`QLSyncPage` 现在分两块，**底部整合包（.mrpack）已定稿，顶部资源包更新（RPU）还有待确认的分歧**。
+
+- **底部「整合包(.mrpack)」= 定稿**：`QLPackSync`（pack 驱动，对账/下载/删除/可选组/RPU 目录不动），选包 → 导入/更新此实例；resourcepacks、shaderpacks、config、mods 都归它；`qlrpu/**` 与 `config/qlrpu-client.json` 归 RPU。
+- **顶部「资源包更新(RPU)」= 两种实现都在仓库里，用户未拍板**：
+  - A（当前 HEAD 行为，提交 `8c470b6b7`/`f723118d8`）：启动器自己跑 RPU 流水线——`QLRpuClient` + `QLRpuUpdater.update`：session → `/releases/latest` → `/releases/{id}/manifest`（签名 envelope 原样存）→ `/sources` 取 available 的 sourceId → `/check`（**每批 ≤100**，200 会 400「内容超出允许长度」）→ `/download-tickets`（同样 ≤100）→ 下载密文对象到 `qlrpu/cache/objects/<objectId>.obj`（`.part` 临时 + cipherSha256 校验）→ **全部通过才写 `current.json`**；UI 单按钮「更新资源包」，进度 x/y。
+  - B（提交 `ccffe6145`）：按钮只 `Versions.launch` 启动游戏，检查/下载/进度条/验签全交给游戏内 RPU 客户端；`QLRpuUpdater` 只读。
+  - 用户原话演进：「把RPU那整套流程都搬到启动器」→ 两按钮改成一按钮 →「直接走人家的流程不行吗」。**没有确认 A/B**；如需回到 B，`git show ccffe6145 -- HMCL/src/main/java/org/jackhuang/hmcl/ui/ql/QLSyncPage.java QLRpuUpdater.java` 即可取回。
+- 运行环境坑：系统代理若是 Watt（127.0.0.1:26561），JVM 会 PKIX 失败，启动器「网络 → 代理」要设「不使用代理」；`cdn.modrinth.com` 直连可用。
+- 门禁：`:HMCLCore:test --tests org.jackhuang.hmcl.ql.*`（47 例）· `:HMCL:checkTranslations` · `compileJava` · checkstyle ×4；最新 exe 构建于 19:1x，SHA1 `E9ADE301474E…`。
