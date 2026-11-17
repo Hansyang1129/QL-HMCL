@@ -52,9 +52,19 @@ class QLPackGuardTest {
     @Test
     void markerIsCaseInsensitive() throws IOException {
         Path mods = Files.createDirectories(gameDir.resolve("mods"));
-        Files.writeString(mods.resolve("QINGLANRPU-2.0.jar"), "x");
+        Files.writeString(mods.resolve("qlrpuclient-QingLanRPUClient-1.1.0.jar"), "x");
 
         assertTrue(QLPackGuard.isSyncable(gameDir));
+    }
+
+    /// A mod that merely mentions "rpu" must not unlock the sync page.
+    @Test
+    void unrelatedRpuNamedModDoesNotCount() throws IOException {
+        Path mods = Files.createDirectories(gameDir.resolve("mods"));
+        Files.writeString(mods.resolve("rpubridge-1.0.jar"), "x");
+        Files.writeString(mods.resolve("QLRPU-helper.jar"), "x");
+
+        assertFalse(QLPackGuard.isSyncable(gameDir));
     }
 
     /// A personal instance without the RPU mod must never be updated.

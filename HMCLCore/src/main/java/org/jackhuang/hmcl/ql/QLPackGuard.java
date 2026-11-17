@@ -38,8 +38,10 @@ import java.util.stream.Stream;
 @NotNullByDefault
 public final class QLPackGuard {
 
-    /// Marker in the file name of the RPU mod shipped with the pack; case-insensitive.
-    public static final String RPU_MOD_MARKER = "rpu";
+    /// Exact marker the pack's updater mod file name must carry (case-insensitive):
+    /// {@code [C]QingLanRPUClient-1.0.0-updated.jar}. Deliberately narrow -- a random mod
+    /// with "rpu" in its name must never unlock the sync page.
+    public static final String RPU_MOD_MARKER = "qinglanrpuclient";
 
     private QLPackGuard() {
     }

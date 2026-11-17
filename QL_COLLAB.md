@@ -10,7 +10,7 @@
 
 为「轻蓝 MTR 2.0」整合包社区定制的启动器（品牌中文名为**轻蓝**，繁中作**輕藍**，罗马字 Qinglan；历史工作日志里的旧写法不改）：
 
-1. **增量同步**（已完成；2026-11-17 架构调整）：manifest 驱动（替代 1.7GB 整包重下），**单一 mods 频道**（不再区分官方包/优化包）+ 可选 mod 组（voxy/dh/axiom）。**资源包与光影交给游戏内的 RPU 模组**；同步页只对带 RPU 模组的整合包实例开放（`QLPackGuard`），其他实例显示「此实例不可同步」。
+1. **增量同步**（已完成；2026-11-17 架构调整）：manifest 驱动（替代 1.7GB 整包重下），**单一 mods 频道**（不再区分官方包/优化包）+ 可选 mod 组（voxy/dh/axiom）。**资源包交给游戏内的 RPU 客户端**（它自建 `qlrpu/` 密文缓存 + 运行时虚拟挂载，不写 `resourcepacks/`）；**光影属于最小 mrpack，照常同步**；同步页只对带 `QingLanRPUClient` 的整合包实例开放（`QLPackGuard`），其他实例显示「此实例不可同步」。
 2. **种子导入**（阶段2，已完成）：直接安装 FULL/LITE `.mrpack`（`QLSeedImporter` + 同步页导入区块 + 「寻找实例」引导页）。
 3. **论坛页**（阶段3，已完成）：qlbbs.ota8a.cn（Halo content API + RSS 兜底）。**用户明确要求：HMCL 原生 UI 组件渲染，禁止 WebView 套壳**。
 4. **服务器状态页**（阶段4，已完成）：SLP `play.simpfun.cn:32650` / MTR Web `:14614` / reporter `:19451`；进页自动探测 + 30s 轮询；manifest `servers[]` 字段仍预留。
@@ -365,13 +365,3 @@ Git 身份（repo 本地）：`tux106` / `tux106@qq.com`。commit 规约：`feat
 - 待办不变：正式资源服务器 URL、`servers[]` 消费、下拉色块之外的图标位。
 
 ## 续16（2026-10-21）：MTR 页美化（tag 药丸 / RadioChoiceList / 线色班次与站序链 / 删手写 style）
-
-## 续18（2026-11-17）：同步架构调整——单频道 + RPU 门禁 + 资源包移交
-
-用户判定三件事：① 资源包/光影由游戏内 **RPU 模组**自己的机制更新，启动器不该管；② 不再区分「优化包/标准包」，只保留一套 mods 清单；③ 同步页只对**带 RPU 模组的实例**开放（本机实测标记 `[C]QingLanRPUClient-1.0.0-updated.jar`），其余提示「此实例不可同步」。
-
-- **资源包移交**（`QLManifest.isRpuOwned`）：发布器只把 `config/**` + `options.txt` 归入 common，`resourcepacks/**`、`shaderpacks/**` 进报表 RPU 桶、不进清单；同步引擎对这类条目直接跳过（不再拉那 ~700MB），已跟踪的旧文件**只 untrack 不删除**（`SyncOutcome.handedOver`），完成提示写「资源包已交由游戏内 RPU 模组管理：N 个」。
-- **单频道**：`MODS_CHANNELS` 收缩为 `{std}`（新增 `CHANNEL_MODS`）；`fromJson` 只要求 `std`+`common`；发布器不再产出 pfm；种子/同步统一 std；state 里遗留 pfm 跟踪项按「退役频道」移交（untrack 不删），`mods-pfm/` 目录原样保留。
-- **门禁 `QLPackGuard`**：`QLSyncPage.refreshInstanceHint` 判定，非整合包实例禁用「检查更新/保存地址/下载并应用」并显示 `qinglan.sync.notSyncable`，实例行显示 RPU 文件名；删掉频道单选组与 4 个 `qinglan.sync.channel*` 键（含 yue/nan）。
-- 测试：新增 `QLPackGuardTest`（5 例）、`QLSyncManagerTest.handsResourcePacksOverInsteadOfDownloadingOrDeleting`、`QLManifestToolTest.leavesResourcePacksToTheRpuMod`；E2E 删 pfm 场景、common 期望 270→227；`QLSeedImporterTest` 计数与「退役 pfm 目录不动」断言更新；ACL 不可写环境里 seed 读拒绝分支改 assume 跳过。
-- 门禁：ql 58 例 · checkTranslations · compileJava · 四个 checkstyle 任务全绿。

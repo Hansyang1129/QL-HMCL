@@ -259,6 +259,9 @@ public final class QLSyncManagerTest {
         Path rp = gameDir.resolve("resourcepacks").resolve("RP.zip");
         Files.createDirectories(rp.getParent());
         Files.write(rp, pack);
+        Path rpuCache = gameDir.resolve("qlrpu").resolve("cache").resolve("current.json");
+        Files.createDirectories(rpuCache.getParent());
+        Files.writeString(rpuCache, "{}");
 
         // 1. A manifest that still lists the resource pack must be ignored by the launcher.
         JsonObject withPack = manifest();
@@ -282,6 +285,8 @@ public final class QLSyncManagerTest {
         QLSyncState legacy = QLSyncState.load(gameDir);
         legacy.track(QLManifest.CHANNEL_COMMON, "resourcepacks/RP.zip",
                 DigestUtils.digestToString("SHA-1", pack));
+        legacy.track(QLManifest.CHANNEL_COMMON, "qlrpu/cache/current.json",
+                DigestUtils.digestToString("SHA-1", "{}".getBytes(StandardCharsets.UTF_8)));
         legacy.save(gameDir);
 
         JsonObject withoutPack = manifest();
@@ -292,7 +297,7 @@ public final class QLSyncManagerTest {
                 QLManifest.fromJson(withoutPack.toString()), "std", null, null);
 
         assertEquals(0, second.deleted, "the launcher must not delete the RPU-owned folder");
-        assertEquals(1, second.handedOver);
+        assertEquals(2, second.handedOver, "the pack file and the RPU cache are both handed over");
         assertTrue(Files.exists(rp), "the pack stays on disk for the RPU mod");
         assertTrue(QLSyncState.load(gameDir).trackedOf(QLManifest.CHANNEL_COMMON).isEmpty(),
                 "the launcher drops its claim on the handed-over file");

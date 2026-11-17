@@ -90,15 +90,28 @@ public final class QLManifest {
     /// Name of the shared channel whose files resolve directly against the game directory.
     public static final String CHANNEL_COMMON = "common";
 
-    /// Folders the in-game RPU mod owns (resource packs and shaders). The launcher never
-    /// downloads, tracks or deletes files there.
-    public static final List<String> RPU_FOLDERS = List.of("resourcepacks", "shaderpacks");
+    /// Folders the in-game RPU mod owns. The launcher never downloads, tracks or deletes
+    /// files there:
+    /// <ul>
+    ///     <li>{@code qlrpu} — the client's own store: {@code cache/current.json} (signed
+    ///     release payload) and {@code cache/objects/*.obj} (encrypted, hundreds of MB);</li>
+    ///     <li>{@code resourcepacks} — packs are mounted virtually at runtime by that mod,
+    ///     so the launcher has no business writing them. Shaders are <em>not</em> in this
+    ///     list: they belong to the minimal {@code .mrpack} and are synced normally.</li>
+    /// </ul>
+    public static final List<String> RPU_FOLDERS = List.of("qlrpu", "resourcepacks");
 
-    /// @return whether the logical path lives in a folder the in-game RPU mod owns.
+    /// Individual files inside launcher-owned folders that still belong to the RPU client,
+    /// because it is the only writer of its own settings.
+    public static final List<String> RPU_FILES = List.of("config/qlrpu-client.json");
+
+    /// @return whether the logical path belongs to the in-game RPU mod instead of the launcher.
     public static boolean isRpuOwned(@Nullable String logicalPath) {
         if (logicalPath == null)
             return false;
         String normalized = logicalPath.replace('\\', '/');
+        if (RPU_FILES.contains(normalized))
+            return true;
         int slash = normalized.indexOf('/');
         String segment = slash < 0 ? normalized : normalized.substring(0, slash);
         return RPU_FOLDERS.contains(segment);

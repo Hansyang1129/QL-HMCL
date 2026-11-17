@@ -429,9 +429,9 @@ public final class QLSyncE2E {
             problems.add("state activeChannel " + state.activeChannel);
         if (state.trackedOf("std").size() != 136)
             problems.add("tracked std " + state.trackedOf("std").size() + " != 136");
-        // configs + options.txt only: resource packs and shaders belong to the in-game RPU mod.
-        if (state.trackedOf(QLManifest.CHANNEL_COMMON).size() != 227)
-            problems.add("tracked common " + state.trackedOf(QLManifest.CHANNEL_COMMON).size() + " != 227");
+        // configs + options.txt + shaders: resource packs belong to the in-game RPU mod.
+        if (state.trackedOf(QLManifest.CHANNEL_COMMON).size() != 230)
+            problems.add("tracked common " + state.trackedOf(QLManifest.CHANNEL_COMMON).size() + " != 230");
         if (!Set.of("dh").equals(new HashSet<>(state.enabledOptional)))
             problems.add("enabledOptional " + state.enabledOptional);
 

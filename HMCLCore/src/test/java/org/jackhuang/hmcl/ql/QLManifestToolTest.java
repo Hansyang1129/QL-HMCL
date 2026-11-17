@@ -86,13 +86,17 @@ public final class QLManifestToolTest {
         JsonObject manifest = runTool(Map.of(
                 "modrinth.index.json", utf8(indexJson(List.of(indexFile("mods/a.jar", mod, List.of())))),
                 "overrides/config/a.toml", config,
+                "overrides/config/qlrpu-client.json", utf8("{}"),
                 "overrides/resourcepacks/RP.zip", pack,
-                "overrides/shaderpacks/S.zip", shader));
+                "overrides/shaderpacks/S.zip", shader,
+                "overrides/qlrpu/cache/current.json", utf8("{}")));
 
         JsonObject channels = manifest.getAsJsonObject("channels");
         assertEquals(List.of("mods/a.jar"), entriesOf(channels.getAsJsonObject("std").getAsJsonArray("mods")));
-        assertEquals(List.of("config/a.toml"), entriesOf(channels.getAsJsonObject("common").getAsJsonArray("files")),
-                "only configs join common; packs and shaders are the RPU mod's business");
+        assertEquals(List.of("config/a.toml", "shaderpacks/S.zip"),
+                entriesOf(channels.getAsJsonObject("common").getAsJsonArray("files")),
+                "shaders belong to the minimal mrpack; resource packs, qlrpu and the RPU "
+                        + "client's own config stay out");
     }
 
     private static String indexJson(List<JsonObject> files) {
