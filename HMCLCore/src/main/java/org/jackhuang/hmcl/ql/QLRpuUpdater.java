@@ -72,10 +72,10 @@ public final class QLRpuUpdater {
 
     /// Objects per {@code /check} request; the release lists thousands and the backend
     /// rejects oversized bodies.
-    private static final int CHECK_BATCH = 400;
+    private static final int CHECK_BATCH = 100;
 
     /// Objects per {@code /download-tickets} request.
-    private static final int TICKET_BATCH = 200;
+    private static final int TICKET_BATCH = 100;
 
     private QLRpuUpdater() {
     }
