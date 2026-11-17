@@ -71,10 +71,15 @@ import static org.jackhuang.hmcl.util.logging.Logger.LOG;
 /// Arguments are split on whitespace, so paths containing spaces must be avoided.</p>
 ///
 /// <p>Paths are routed by their leading segment: {@code mods/**} joins the {@code std}
-/// channel, {@code config/**}/{@code resourcepacks/**}/{@code shaderpacks/**}/{@code options.txt}
-/// join the {@code common} channel, and everything else is skipped and reported. The
-/// {@code PCL} folder, {@code servers.dat}, {@code modrinth.index.json} and
+/// channel, {@code config/**} and {@code options.txt} join the {@code common} channel,
+/// and everything else is skipped and reported. The {@code PCL} folder,
+/// {@code servers.dat}, {@code modrinth.index.json} and
 /// {@code fabric-loader-}/{@code fabric-api} leftovers are never published.</p>
+///
+/// <p><b>Resource packs are not this launcher's business.</b> The pack ships an in-game
+/// RPU mod that updates {@code resourcepacks/**} and {@code shaderpacks/**} through its
+/// own mechanism, so they are counted and reported as {@code RPU} rather than published:
+/// the launcher manifest is a minimal, mods-and-configs-only update channel.</p>
 @NotNullByDefault
 public final class QLManifestTool {
 
@@ -84,8 +89,11 @@ public final class QLManifestTool {
     private static final String DEFAULT_PACK_NAME = "Qinglan-2nd";
     private static final String DEFAULT_PACK_VERSION = "26.8.1";
 
-    /// Override folders distributed as common files.
-    private static final List<String> COMMON_FOLDERS = List.of("config", "resourcepacks", "shaderpacks");
+    /// Override folders distributed as common files: the mods' configs only.
+    private static final List<String> COMMON_FOLDERS = List.of("config");
+
+    /// Folders owned by the in-game RPU mod; never published by this launcher.
+    private static final List<String> RPU_FOLDERS = List.of("resourcepacks", "shaderpacks");
 
     /// Override root files distributed as common files.
     private static final List<String> COMMON_ROOT_FILES = List.of("options.txt");
@@ -226,7 +234,10 @@ public final class QLManifestTool {
             }
             String route = channelOf(path);
             if (route == null) {
-                report.unrouted(path);
+                if (isRpuPath(path))
+                    report.rpu(path);
+                else
+                    report.unrouted(path);
                 continue;
             }
             if (isExcludedModPath(path)) {
@@ -268,7 +279,10 @@ public final class QLManifestTool {
             }
             String route = channelOf(relative);
             if (route == null) {
-                report.unrouted(relative);
+                if (isRpuPath(relative))
+                    report.rpu(relative);
+                else
+                    report.unrouted(relative);
                 continue;
             }
             if (isExcludedModPath(relative)) {
@@ -294,10 +308,24 @@ public final class QLManifestTool {
             collectDirectoryEntries(runDir.resolve(folder), folder, "common", baseUrl, report);
         for (String rootFile : COMMON_ROOT_FILES)
             collectRootFile(runDir.resolve(rootFile), rootFile, baseUrl, report);
+        for (String folder : RPU_FOLDERS)
+            collectRpuEntries(runDir.resolve(folder), folder, report);
 
         String packName = options.getOrDefault("pack-name", DEFAULT_PACK_NAME);
         String packVersion = normalizePackVersion(options.getOrDefault("pack-version", DEFAULT_PACK_VERSION));
         return renderManifest(packName, packVersion, report.stdMods, report.commonFiles, report);
+    }
+
+    /// Lists a folder the in-game RPU mod owns, only to report it; nothing is hashed and
+    /// nothing reaches the manifest.
+    private static void collectRpuEntries(Path folder, String prefix, Report report) throws IOException {
+        if (!Files.isDirectory(folder))
+            return;
+        try (Stream<Path> stream = Files.walk(folder)) {
+            stream.filter(Files::isRegularFile)
+                    .sorted()
+                    .forEach(file -> report.rpu(prefix + "/" + folder.relativize(file).toString().replace('\\', '/')));
+        }
     }
 
     private static void collectDirectoryEntries(Path folder, String prefix, String route, String baseUrl,
@@ -369,6 +397,11 @@ public final class QLManifestTool {
         if (COMMON_FOLDERS.contains(segment) || COMMON_ROOT_FILES.contains(segment))
             return "common";
         return null;
+    }
+
+    /// @return whether the path belongs to a folder the in-game RPU mod updates itself.
+    private static boolean isRpuPath(String relative) {
+        return QLManifest.isRpuOwned(relative);
     }
 
     private static boolean isSkippedPath(String relative) {
@@ -444,7 +477,6 @@ public final class QLManifestTool {
 
         JsonObject channels = new JsonObject();
         channels.add("std", channelObject("官方包", stdMods, null));
-        channels.add("pfm", channelObject("优化包", List.of(), null));
         channels.add("common", channelObject("公共文件", null, commonFiles));
 
         JsonObject pack = new JsonObject();
@@ -595,6 +627,7 @@ public final class QLManifestTool {
         final List<String> unroutedPaths = new ArrayList<>();
         final List<String> excludedPaths = new ArrayList<>();
         final List<String> skippedPaths = new ArrayList<>();
+        final List<String> rpuPaths = new ArrayList<>();
         int coveredByIndex;
         int skippedEntries;
 
@@ -613,6 +646,11 @@ public final class QLManifestTool {
         void unrouted(String path) {
             unroutedPaths.add(path);
             skippedEntries++;
+        }
+
+        /// Records a file the in-game RPU mod owns; it is not part of this manifest.
+        void rpu(String path) {
+            rpuPaths.add(path);
         }
 
         void excluded(String path) {
@@ -638,6 +676,9 @@ public final class QLManifestTool {
                     .append(", coveredByIndex=").append(coveredByIndex)
                     .append(", skipped=").append(skippedEntries)
                     .append(", duplicates=").append(duplicates.size());
+            if (!rpuPaths.isEmpty())
+                builder.append(", rpu=").append(rpuPaths.size());
+            append("RPU (in-game mod, not published)", rpuPaths, builder);
             append("Unrouted", unroutedPaths, builder);
             append("Excluded", excludedPaths, builder);
             append("Skipped", skippedPaths, builder);

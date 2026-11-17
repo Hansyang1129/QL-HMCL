@@ -62,12 +62,18 @@ import java.util.logging.Logger;
 ///
 /// <p>Only files tracked by the previous sync state are ever deleted. Anything a user placed
 /// into the game directory manually (own mods, screenshots, saves...) is never touched.</p>
+///
+/// <p><b>Resource packs and shaders are out of scope.</b> The pack updates those in game
+/// through its RPU mod, so this engine ignores such manifest entries and, when an older
+/// state still tracks them, <em>untracks</em> those files instead of deleting them: the
+/// launcher simply stops managing them and the RPU mod keeps them current.</p>
 @NotNullByDefault
 public final class QLSyncManager {
 
     private static final Logger LOG = Logger.getLogger(QLSyncManager.class.getName());
 
     private static final String SHA1_ALGORITHM = "SHA-1";
+
     
 
     private final Path gameDir;
@@ -147,6 +153,14 @@ public final class QLSyncManager {
                 String logicalPath = fileEntry.getKey();
                 if (desiredKeys.contains(channelKey(channel, logicalPath)))
                     continue;
+                if (QLManifest.isRpuOwned(logicalPath) || isRetiredChannel(channel)) {
+                    // Resource packs belong to the in-game RPU mod, and the retired pfm
+                    // channel belongs to the user now: drop our claim, keep the bytes.
+                    // replaceTracked() below finishes the handover.
+                    LOG.info("Handing " + logicalPath + " over instead of deleting it");
+                    outcome.handedOver++;
+                    continue;
+                }
                 deleteTrackedFile(channel, logicalPath);
                 outcome.deleted++;
             }
@@ -283,6 +297,13 @@ public final class QLSyncManager {
             }
         }
         for (QLManifest.FileEntry entry : manifest.channelOrThrow(QLManifest.CHANNEL_COMMON).files) {
+            String logicalPath = Objects.requireNonNull(entry.path);
+            if (QLManifest.isRpuOwned(logicalPath)) {
+                // Published by an older tool: the RPU mod owns it, so the launcher must not
+                // download it either (this is what keeps the 700 MB of packs off our back).
+                LOG.fine("Ignoring resource-pack entry owned by the RPU mod: " + logicalPath);
+                continue;
+            }
             Path target = gameDir.resolve(Objects.requireNonNull(entry.path)
                     .replace("/", gameDir.getFileSystem().getSeparator()));
             planned.add(new PlannedFile(QLManifest.CHANNEL_COMMON, entry.path, entry, target));
@@ -313,6 +334,12 @@ public final class QLSyncManager {
         }
 
         return ReconcileResult.DOWNLOAD;
+    }
+
+    /// @return whether the channel no longer exists in this build (the retired {@code pfm});
+    ///         its files stay with the user now that channel switching is gone.
+    private static boolean isRetiredChannel(String channel) {
+        return !QLManifest.CHANNEL_COMMON.equals(channel) && !QLManifest.MODS_CHANNELS.contains(channel);
     }
 
     /// Deletes a tracked file of the given channel; both naming variants are considered.
@@ -439,6 +466,10 @@ public final class QLSyncManager {
 
         /// Number of managed files removed after disappearing from the manifest.
         public int deleted;
+
+        /// Number of files the launcher stopped managing and left on disk because the
+        /// in-game RPU mod owns their folder (resource packs, shaders).
+        public int handedOver;
 
         /// Number of files renamed between {@code *.jar} and {@code *.jar.disabled}
         /// (and the number of channel folder renames is covered by {@link #channelSwitched}).

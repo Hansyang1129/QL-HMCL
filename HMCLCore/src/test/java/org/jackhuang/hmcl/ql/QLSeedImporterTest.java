@@ -129,7 +129,7 @@ public final class QLSeedImporterTest {
         QLSeedImporter.SeedOutcome outcome = QLSeedImporter.seedize(gameDir, parsed,
                 "http://manifest.example/", "std", null, null);
 
-        assertEquals(3, outcome.seeded, "basic.jar, cfg.toml and the resource pack must be seeded");
+        assertEquals(2, outcome.seeded, "basic.jar and cfg.toml are seeded; the pack file is the RPU mod's");
         assertEquals(1, outcome.missing, "the disabled optional mod is planned as *.disabled and not yet parked");
         assertEquals(0, outcome.mismatch);
 
@@ -138,9 +138,8 @@ public final class QLSeedImporterTest {
         assertEquals("26.8.1", state.packVersion);
         assertEquals("http://manifest.example/", state.manifestUrl);
         assertEquals(Map.of("mods/basic.jar", sha1(basic)), state.trackedOf("std"));
-        assertEquals(Map.of(
-                "config/cfg.toml", sha1(config),
-                "resourcepacks/Faithful-32x_v1.2.1.zip", sha1(resourcePack)), state.trackedOf("common"));
+        assertEquals(Map.of("config/cfg.toml", sha1(config)), state.trackedOf("common"),
+                "resource packs belong to the in-game RPU mod and are never tracked");
         assertTrue(state.enabledOptionalGroups().isEmpty());
 
         QLDblPack dbl = QLDblPack.load(gameDir);
@@ -155,7 +154,7 @@ public final class QLSeedImporterTest {
 
         assertEquals(0, synced.downloaded, () -> "failedFiles=" + synced.failedFiles);
         assertEquals(1, synced.renamed, "packaging keeps the plain name, sync parks it as *.disabled");
-        assertEquals(3, synced.unchanged);
+        assertEquals(2, synced.unchanged, "both mods verify; the pack file is not the launcher's");
         assertEquals(Map.of(
                 "mods/basic.jar", sha1(basic),
                 "mods/entity-culling.jar", sha1(entityCulling)), QLSyncState.load(gameDir).trackedOf("std"));
@@ -216,13 +215,15 @@ public final class QLSeedImporterTest {
         assertEquals("std", QLDirectoryLayout.readChannelMarker(mods),
                 "a stale record must not restamp a marker-stamped folder");
 
-        // the same rule holds when a parked folder of the recorded channel exists
-        QLDirectoryLayout.stampChannel(gameDir.resolve("mods-pfm"), "pfm");
-        QLDirectoryLayout.recover(gameDir, "pfm");
+        // a leftover folder from the retired pfm channel is neither adopted nor renamed
+        Path retired = gameDir.resolve("mods-pfm");
+        Files.createDirectories(retired);
+        Files.writeString(retired.resolve("old.jar"), "old");
+        QLDirectoryLayout.recover(gameDir, QLManifest.CHANNEL_MODS);
         assertEquals("std", QLDirectoryLayout.readChannelMarker(mods),
                 "the concrete folder keeps its own channel");
-        assertEquals("pfm", QLDirectoryLayout.readChannelMarker(gameDir.resolve("mods-pfm")),
-                "the parked folder is never swallowed either");
+        assertTrue(Files.isRegularFile(retired.resolve("old.jar")),
+                "the retired pfm folder is left untouched for the user");
     }
 
     /// Seeding an already-synced instance must keep the disk channel: the seed
@@ -282,7 +283,16 @@ public final class QLSeedImporterTest {
         assertTrue(QLSyncState.load(gameDir).trackedOf("std").isEmpty(), "a deleted seed file stays untracked");
 
         Files.write(gameDir.resolve("mods").resolve("broken.jar"), expected);
-        try (ReadGate gate = denyRead(gameDir.resolve("mods").resolve("broken.jar"))) {
+        ReadGate gate;
+        try {
+            gate = denyRead(gameDir.resolve("mods").resolve("broken.jar"));
+        } catch (IOException | SecurityException e) {
+            // Sandboxes and unprivileged Windows accounts refuse ACL writes, so the
+            // unreadable-file branch cannot be exercised there.
+            assumeTrue(false, "cannot restrict read permissions here: " + e);
+            return;
+        }
+        try (ReadGate open = gate) {
             try {
                 Files.newInputStream(gameDir.resolve("mods").resolve("broken.jar")).close();
             } catch (IOException e) {

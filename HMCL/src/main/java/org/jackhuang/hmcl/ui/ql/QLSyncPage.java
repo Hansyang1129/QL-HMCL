@@ -19,7 +19,6 @@ package org.jackhuang.hmcl.ui.ql;
 
 import com.jfoenix.controls.JFXButton;
 import com.jfoenix.controls.JFXCheckBox;
-import com.jfoenix.controls.JFXRadioButton;
 import com.jfoenix.controls.JFXTextField;
 import javafx.beans.property.ReadOnlyObjectProperty;
 import javafx.beans.property.ReadOnlyObjectWrapper;
@@ -29,8 +28,6 @@ import javafx.scene.Node;
 import javafx.scene.control.Label;
 import javafx.scene.control.ProgressBar;
 import javafx.scene.control.ScrollPane;
-import javafx.scene.control.Toggle;
-import javafx.scene.control.ToggleGroup;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
@@ -41,9 +38,9 @@ import org.jackhuang.hmcl.game.ModpackHelper;
 import org.jackhuang.hmcl.modpack.Modpack;
 import org.jackhuang.hmcl.modpack.modrinth.ModrinthModpackProvider;
 import org.jackhuang.hmcl.ql.QLConstants;
-import org.jackhuang.hmcl.ql.QLDirectoryLayout;
 import org.jackhuang.hmcl.ql.QLManifest;
 import org.jackhuang.hmcl.ql.QLManifestFetcher;
+import org.jackhuang.hmcl.ql.QLPackGuard;
 import org.jackhuang.hmcl.ql.QLSeedImporter;
 import org.jackhuang.hmcl.ql.QLSyncManager;
 import org.jackhuang.hmcl.ql.QLSyncState;
@@ -87,9 +84,9 @@ public class QLSyncPage extends DecoratorAnimatedPage implements DecoratorPage, 
     private final Label statusLabel = new Label();
     private final Label progressLabel = new Label();
     private final ProgressBar progressBar = new ProgressBar();
-    private final ToggleGroup channelGroup = new ToggleGroup();
-    private final JFXRadioButton stdRadio = new JFXRadioButton(i18n("qinglan.sync.channel.std"));
-    private final JFXRadioButton pfmRadio = new JFXRadioButton(i18n("qinglan.sync.channel.pfm"));
+    /// Explains why the update controls are disabled; hidden for pack instances.
+    private final Label gateLabel = new Label();
+    private final JFXButton saveUrlButton = new JFXButton(i18n("qinglan.sync.save"));
     private final VBox optionalBox = new VBox(4);
     private final Label seedInfoLabel = new Label();
     private final JFXTextField seedNameField = new JFXTextField();
@@ -103,13 +100,10 @@ public class QLSyncPage extends DecoratorAnimatedPage implements DecoratorPage, 
     private @Nullable Modpack seedModpack;
     private boolean busy;
 
-    public QLSyncPage() {
-        stdRadio.setToggleGroup(channelGroup);
-        stdRadio.setUserData("std");
-        pfmRadio.setToggleGroup(channelGroup);
-        pfmRadio.setUserData("pfm");
+    /// Whether the selected instance carries the pack's RPU mod and may be updated at all.
+    private boolean syncable;
 
-        JFXButton saveUrlButton = new JFXButton(i18n("qinglan.sync.save"));
+    public QLSyncPage() {
         saveUrlButton.setOnAction(e -> saveManifestUrl());
 
         HBox urlRow = new HBox(8, manifestUrlField, saveUrlButton);
@@ -131,9 +125,6 @@ public class QLSyncPage extends DecoratorAnimatedPage implements DecoratorPage, 
             applyButton.setDisable(true);
         });
 
-        HBox channelRow = new HBox(16, stdRadio, pfmRadio);
-        channelRow.setAlignment(Pos.CENTER_LEFT);
-
         seedStartButton.setDisable(true);
         seedNameField.setPromptText(i18n("qinglan.sync.seed.instance"));
         HBox.setHgrow(seedNameField, Priority.ALWAYS);
@@ -147,8 +138,7 @@ public class QLSyncPage extends DecoratorAnimatedPage implements DecoratorPage, 
         VBox content = new VBox(12,
                 createTitleLabel(i18n("qinglan.sync.instanceTitle")), instanceLabel,
                 createTitleLabel(i18n("qinglan.sync.manifestUrl")), urlRow,
-                actionsRow, statusLabel, progressLabel, progressBar,
-                createTitleLabel(i18n("qinglan.sync.channel")), channelRow,
+                actionsRow, statusLabel, progressLabel, progressBar, gateLabel,
                 createTitleLabel(i18n("qinglan.sync.optional")), optionalBox,
                 createTitleLabel(i18n("qinglan.sync.seed.title")), new VBox(8, seedInfoRow, seedRow));
         content.setPadding(new Insets(16));
@@ -193,11 +183,39 @@ public class QLSyncPage extends DecoratorAnimatedPage implements DecoratorPage, 
         String version = repository.getSelectedInstance();
         if (version == null || !repository.hasVersion(version)) {
             runDirectory = null;
+            syncable = false;
             instanceLabel.setText(i18n("qinglan.sync.instance.none"));
+            applyGate();
             return;
         }
         runDirectory = repository.getRunDirectory(version).toAbsolutePath().normalize();
-        instanceLabel.setText(i18n("qinglan.sync.instance", version, runDirectory.toString()));
+
+        // Only the pack's own instances may be updated: they are the ones carrying the RPU
+        // mod. A personal instance never gets mods from the pack pushed into it.
+        String rpuMod = QLPackGuard.findRpuMod(runDirectory);
+        syncable = rpuMod != null;
+        instanceLabel.setText(syncable
+                ? i18n("qinglan.sync.instance.rpu", version, runDirectory.toString(), rpuMod)
+                : i18n("qinglan.sync.instance", version, runDirectory.toString()));
+        applyGate();
+    }
+
+    /// Enables the update controls only for instances the pack owns (RPU mod present);
+    /// everything else gets an explanation instead of a half-working page.
+    private void applyGate() {
+        gateLabel.setText(i18n("qinglan.sync.notSyncable"));
+        gateLabel.setVisible(!syncable);
+        gateLabel.setManaged(!syncable);
+        gateLabel.setWrapText(true);
+        gateLabel.setStyle("-fx-text-fill: -monet-error;");
+
+        checkUpdateButton.setDisable(!syncable);
+        manifestUrlField.setDisable(!syncable);
+        saveUrlButton.setDisable(!syncable);
+        if (!syncable) {
+            fetchedManifest = null;
+            applyButton.setDisable(true);
+        }
     }
 
     /// Loads the per-instance state for the currently selected instance asynchronously and
@@ -310,13 +328,6 @@ public class QLSyncPage extends DecoratorAnimatedPage implements DecoratorPage, 
                 ? "?" : stateSnapshot.packVersion;
         statusLabel.setText(i18n("qinglan.sync.versions", currentVersion, remoteVersion));
 
-        String activeChannel = runDirectory == null ? "std"
-                : QLDirectoryLayout.detectActiveChannel(runDirectory, stateSnapshot.activeChannel);
-        if ("pfm".equals(activeChannel))
-            pfmRadio.setSelected(true);
-        else
-            stdRadio.setSelected(true);
-
         optionalBox.getChildren().clear();
         for (String group : manifest.optionalGroups()) {
             JFXCheckBox checkBox = new JFXCheckBox(group);
@@ -336,8 +347,8 @@ public class QLSyncPage extends DecoratorAnimatedPage implements DecoratorPage, 
         if (busy || fetchedManifest == null || runDirectory == null)
             return;
 
-        Toggle toggle = channelGroup.getSelectedToggle();
-        String targetChannel = toggle != null && "pfm".equals(toggle.getUserData()) ? "pfm" : "std";
+        // One mods channel: the pack is either ours (RPU mod present) or not syncable at all.
+        String targetChannel = QLManifest.CHANNEL_MODS;
 
         Map<String, Boolean> optionalExtras = new LinkedHashMap<>();
         for (Node node : optionalBox.getChildren()) {
@@ -544,6 +555,9 @@ public class QLSyncPage extends DecoratorAnimatedPage implements DecoratorPage, 
         String summary = i18n("qinglan.sync.apply.done",
                 String.valueOf(outcome.downloaded), String.valueOf(outcome.unchanged),
                 String.valueOf(outcome.renamed), String.valueOf(outcome.deleted));
+        if (outcome.handedOver > 0)
+            summary = summary + "\n" + i18n("qinglan.sync.apply.handedOver",
+                    String.valueOf(outcome.handedOver));
         if (outcome.failedFiles.isEmpty()) {
             Controllers.showToast(summary);
         } else {

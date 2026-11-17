@@ -69,8 +69,7 @@ import java.util.zip.ZipFile;
 ///     <li>fresh install with the {@code dh} optional group enabled;</li>
 ///     <li>idempotent re-run (every file must hash-match, zero downloads);</li>
 ///     <li>disable the {@code dh} group (reversethe {@code *.jar.disabled} rename);</li>
-///     <li>switch to the {@code pfm} channel (folder renames only);</li>
-///     <li>switch back to {@code std} and re-enable {@code dh};</li>
+
 ///     <li>optional: seed-import the FULL pack natively, then zero-download sync;</li>
 ///     <li>optional: seed-import the LITE pack, then let sync fetch the missing CDN mods.</li>
 /// </ol>
@@ -81,7 +80,7 @@ import java.util.zip.ZipFile;
 /// gradlew :HMCLCore:runQlSyncE2E -PsyncE2EArgs="C:/temp/pack-full.mrpack C:/temp/manifest-full.json C:/temp/e2e [C:/temp/pack-lite.mrpack C:/temp/manifest-lite.json]"
 /// }</pre>
 ///
-/// <p>Sync scenarios A–E use the FULL pack payload exclusively. The optional seed scenarios
+/// <p>Sync scenarios A–C use the FULL pack payload exclusively. The optional seed scenarios
 /// unpack a pack natively with HMCL's installer, {@link QLSeedImporter#seedize} it and let a
 /// regular sync fill the gap; both packs carry the same mod files, so the LITE seed scenario
 /// can fetch its missing mods from the FULL zip payload.</p>
@@ -152,9 +151,8 @@ public final class QLSyncE2E {
     private static void runScenarios(Path manifestFile, Path gameDir, int port) throws Exception {
         String manifestText = rewriteManifest(manifestFile, port);
         QLManifest manifest = QLManifest.fromJson(manifestText);
-        System.out.println("Manifest validated: std=" + manifest.channelOrThrow("std").mods.size()
+        System.out.println("Manifest validated: mods=" + manifest.channelOrThrow(QLManifest.CHANNEL_MODS).mods.size()
                 + " common=" + manifest.channelOrThrow(QLManifest.CHANNEL_COMMON).files.size()
-                + " pfm=" + manifest.channelOrThrow("pfm").mods.size()
                 + ", pack " + manifest.packVersionOrDefault());
 
         CacheRepository.getInstance().changeDirectory(gameDir.getParent().resolve(".hmcl"));
@@ -166,12 +164,7 @@ public final class QLSyncE2E {
                 outcome -> check(outcome, 0, 406, 0, 0, false));
         scenario("C. disable dh", manifest, gameDir, "std", Map.of("dh", false),
                 outcome -> check(outcome, 0, 405, 0, 1, false));
-        scenario("D. switch to pfm", manifest, gameDir, "pfm", null,
-                outcome -> check(outcome, 0, 406, 0, 0, true));
-        reportLayout(gameDir);
-        scenario("E. switch back (std, dh on)", manifest, gameDir, "std", Map.of("dh", true),
-                outcome -> check(outcome, 0, 405, 0, 1, true));
-        reportLayout(gameDir);
+
 
         verifyFinalState(gameDir);
         System.out.println("\nAll scenarios passed. Scratch instance kept at " + gameDir.toAbsolutePath());
@@ -411,7 +404,7 @@ public final class QLSyncE2E {
     }
 
     private static void reportLayout(Path gameDir) throws IOException {
-        for (String folder : List.of("mods", "mods-std", "mods-pfm")) {
+        for (String folder : List.of("mods")) {
             Path path = gameDir.resolve(folder);
             if (!Files.isDirectory(path)) {
                 System.out.println("  layout " + folder + ": missing");
@@ -436,10 +429,9 @@ public final class QLSyncE2E {
             problems.add("state activeChannel " + state.activeChannel);
         if (state.trackedOf("std").size() != 136)
             problems.add("tracked std " + state.trackedOf("std").size() + " != 136");
-        if (state.trackedOf(QLManifest.CHANNEL_COMMON).size() != 270)
-            problems.add("tracked common " + state.trackedOf(QLManifest.CHANNEL_COMMON).size() + " != 270");
-        if (state.trackedOf("pfm").size() != 0)
-            problems.add("tracked pfm " + state.trackedOf("pfm").size());
+        // configs + options.txt only: resource packs and shaders belong to the in-game RPU mod.
+        if (state.trackedOf(QLManifest.CHANNEL_COMMON).size() != 227)
+            problems.add("tracked common " + state.trackedOf(QLManifest.CHANNEL_COMMON).size() + " != 227");
         if (!Set.of("dh").equals(new HashSet<>(state.enabledOptional)))
             problems.add("enabledOptional " + state.enabledOptional);
 

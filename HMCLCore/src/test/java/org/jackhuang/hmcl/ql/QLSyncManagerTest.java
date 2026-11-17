@@ -246,6 +246,65 @@ public final class QLSyncManagerTest {
         assertFalse(Files.exists(gameDir.resolve(QLSyncState.STATE_FILE + ".tmp")));
     }
 
+    /// Tests that resource packs belong to the in-game RPU mod: a manifest entry for one is
+    /// never downloaded, and a pack claimed by an older launcher is untracked without being
+    /// deleted.
+    @Test
+    public void handsResourcePacksOverInsteadOfDownloadingOrDeleting() throws IOException {
+        byte[] pack = "resource-pack".getBytes(StandardCharsets.UTF_8);
+        byte[] mod = "mod".getBytes(StandardCharsets.UTF_8);
+        String url = "http://127.0.0.1:" + server.getAddress().getPort() + "/rp";
+        served = mod;
+
+        Path rp = gameDir.resolve("resourcepacks").resolve("RP.zip");
+        Files.createDirectories(rp.getParent());
+        Files.write(rp, pack);
+
+        // 1. A manifest that still lists the resource pack must be ignored by the launcher.
+        JsonObject withPack = manifest();
+        withPack.getAsJsonObject("channels").getAsJsonObject("std")
+                .add("mods", arrayOf(fileEntry("mods/Keep.jar", mod, List.of(url))));
+        withPack.getAsJsonObject("channels").getAsJsonObject("common")
+                .add("files", arrayOf(fileEntry("resourcepacks/RP.zip", pack, List.of(url))));
+
+        QLSyncManager.SyncOutcome first = QLSyncManager.sync(gameDir,
+                QLManifest.fromJson(withPack.toString()), "std", null, null);
+
+        assertEquals(1, first.downloaded, "only the mod is downloaded: " + first.failedFiles);
+        assertEquals(0, first.handedOver);
+        assertTrue(Files.exists(rp), "the pack file is left alone");
+        assertFalse(QLSyncState.load(gameDir).trackedOf(QLManifest.CHANNEL_COMMON)
+                        .containsKey("resourcepacks/RP.zip"),
+                "resource packs are never tracked by the launcher");
+
+        // 2. An older launcher had claimed the pack; the next sync hands it over instead of
+        //    deleting it, and drops the claim so the RPU mod is the only owner.
+        QLSyncState legacy = QLSyncState.load(gameDir);
+        legacy.track(QLManifest.CHANNEL_COMMON, "resourcepacks/RP.zip",
+                DigestUtils.digestToString("SHA-1", pack));
+        legacy.save(gameDir);
+
+        JsonObject withoutPack = manifest();
+        withoutPack.getAsJsonObject("channels").getAsJsonObject("std")
+                .add("mods", arrayOf(fileEntry("mods/Keep.jar", mod, List.of(url))));
+
+        QLSyncManager.SyncOutcome second = QLSyncManager.sync(gameDir,
+                QLManifest.fromJson(withoutPack.toString()), "std", null, null);
+
+        assertEquals(0, second.deleted, "the launcher must not delete the RPU-owned folder");
+        assertEquals(1, second.handedOver);
+        assertTrue(Files.exists(rp), "the pack stays on disk for the RPU mod");
+        assertTrue(QLSyncState.load(gameDir).trackedOf(QLManifest.CHANNEL_COMMON).isEmpty(),
+                "the launcher drops its claim on the handed-over file");
+    }
+
+    private static JsonArray arrayOf(JsonObject... entries) {
+        JsonArray array = new JsonArray();
+        for (JsonObject entry : entries)
+            array.add(entry);
+        return array;
+    }
+
     private static JsonObject manifest() {
         JsonObject manifest = new JsonObject();
         manifest.addProperty("schema", 1);

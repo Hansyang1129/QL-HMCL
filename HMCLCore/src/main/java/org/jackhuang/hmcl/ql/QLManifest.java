@@ -38,20 +38,23 @@ import java.util.Set;
 /// publishing tool and can be served from any HTTP storage.</p>
 ///
 /// <h2>Channel model</h2>
-/// <p>The manifest groups files into three channels:</p>
+/// <p>The manifest groups files into two channels:</p>
 /// <ul>
-///     <li>{@code std} — the official modpack mods, stored in the {@code mods} folder when active
-///     and in {@code mods-std} when inactive;</li>
-///     <li>{@code pfm} — the performance-optimized mods list, stored in {@code mods} when active
-///     and in {@code mods-pfm} when inactive;</li>
-///     <li>{@code common} — files shared by all channels (configs, resource packs, shader packs),
-///     resolved relative to the game directory.</li>
+///     <li>{@code std} — the modpack's mods (the only mods channel; the historical
+///     {@code std}/{@code pfm} split is gone, a pack either is the official pack or is not
+///     syncable at all);</li>
+///     <li>{@code common} — mod configs and {@code options.txt}, resolved relative to the
+///     game directory.</li>
 /// </ul>
 ///
 /// <p>Entries of the {@code std}/{@code pfm} channels use paths relative to the mods folder
 /// (for example {@code mods/Sodium-0.5.13.jar}) so that swapping the active folder does not
 /// invalidate manifest paths. Entries of the {@code common} channel embed their directory prefix
 /// (for example {@code config/create-server.toml}).</p>
+///
+/// <p>Resource packs and shaders are deliberately <em>not</em> part of any channel: the pack
+/// updates them in game through its RPU mod, and {@code QLSyncManager} ignores such entries
+/// (and hands over any it used to track) so the launcher never manages those folders.</p>
 ///
 /// <h2>Optional mods</h2>
 /// <p>An entry may set the {@code optional} field to the name of an optional-mod group
@@ -65,8 +68,7 @@ import java.util.Set;
 ///   "schema": 1,
 ///   "pack": { "name": "Qinglan-2nd", "version": "26.8.1", "updatedAt": "2026-10-13T19:00:00Z" },
 ///   "channels": {
-///     "std":  { "label": "官方包", "mods": [ { "path": "mods/Sodium-0.5.13.jar", "...": "..." } ] },
-///     "pfm":  { "label": "优化包", "mods": [ ... ] },
+///     "std":  { "label": "模组", "mods": [ { "path": "mods/Sodium-0.5.13.jar", "...": "..." } ] },
 ///     "common": { "label": "公共文件", "files": [ ... ] }
 ///   },
 ///   "servers": [ { "id": "qinglan", "name": "轻蓝服务器", "address": "play.simpfun.cn:32650", "kind": "minecraft" } ]
@@ -78,11 +80,29 @@ public final class QLManifest {
     /// Manifest schema version supported by this launcher build.
     public static final int SCHEMA = 1;
 
-    /// Set of channel names that map to their own mods folder ({@code mods-<name>}).
-    public static final Set<String> MODS_CHANNELS = Set.of("std", "pfm");
+    /// Wire name of the single mods channel. It keeps the historical {@code std} spelling for
+    /// compatibility with published tooling; there is no second mods channel any more.
+    public static final String CHANNEL_MODS = "std";
+
+    /// The single mods channel ({@link #CHANNEL_MODS}); kept as a set for the layout helpers.
+    public static final Set<String> MODS_CHANNELS = Set.of(CHANNEL_MODS);
 
     /// Name of the shared channel whose files resolve directly against the game directory.
     public static final String CHANNEL_COMMON = "common";
+
+    /// Folders the in-game RPU mod owns (resource packs and shaders). The launcher never
+    /// downloads, tracks or deletes files there.
+    public static final List<String> RPU_FOLDERS = List.of("resourcepacks", "shaderpacks");
+
+    /// @return whether the logical path lives in a folder the in-game RPU mod owns.
+    public static boolean isRpuOwned(@Nullable String logicalPath) {
+        if (logicalPath == null)
+            return false;
+        String normalized = logicalPath.replace('\\', '/');
+        int slash = normalized.indexOf('/');
+        String segment = slash < 0 ? normalized : normalized.substring(0, slash);
+        return RPU_FOLDERS.contains(segment);
+    }
 
     /// Manifest schema version; must equal {@link #SCHEMA} for the manifest to be accepted.
     public int schema;
@@ -90,7 +110,8 @@ public final class QLManifest {
     /// Identity of the modpack: name, version and publication timestamp.
     public @Nullable Pack pack;
 
-    /// Channels by name; must contain {@code std}, {@code pfm} and {@code common}.
+    /// Channels by name; must contain {@code std} and {@code common}. A legacy {@code pfm}
+    /// channel may still be present and is simply ignored.
     public @Nullable Map<String, Channel> channels;
 
     /// Reserved for future use: list of servers shown in the launcher UI.

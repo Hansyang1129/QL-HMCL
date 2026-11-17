@@ -25,7 +25,6 @@ import org.jackhuang.hmcl.util.DigestUtils;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -100,8 +99,9 @@ public final class QLSeedImporter {
         SeedOutcome outcome = new SeedOutcome();
 
         int total = 0;
-        for (QLManifest.Channel modsChannel : List.of(manifest.channelOrThrow("std"), manifest.channelOrThrow("pfm"), manifest.channelOrThrow(QLManifest.CHANNEL_COMMON)))
-            total += modsChannel.mods.size() + modsChannel.files.size();
+        for (String modsChannel : QLManifest.MODS_CHANNELS)
+            total += manifest.channelOrThrow(modsChannel).mods.size();
+        total += manifest.channelOrThrow(QLManifest.CHANNEL_COMMON).files.size();
 
         int finished = 0;
 
@@ -129,6 +129,8 @@ public final class QLSeedImporter {
 
         // ---Common channel: plain game-directory paths.---------------------------------
         for (QLManifest.FileEntry entry : manifest.channelOrThrow(QLManifest.CHANNEL_COMMON).files) {
+            if (QLManifest.isRpuOwned(entry.path))
+                continue; // owned by the in-game RPU mod, never seeded or tracked
             Path target = gameDir.resolve(Objects.requireNonNull(entry.path)
                     .replace("/", gameDir.getFileSystem().getSeparator()));
             SeedStatus status = reconcileForSeedSoftly(target, entry);

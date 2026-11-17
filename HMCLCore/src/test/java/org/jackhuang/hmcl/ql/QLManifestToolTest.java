@@ -74,6 +74,27 @@ public final class QLManifestToolTest {
                 "the overrides payload must join common and must not repeat index paths");
     }
 
+    /// Resource packs and shaders belong to the in-game RPU mod, so the launcher manifest must
+    /// stay a mods-and-configs-only channel: neither may leak into it.
+    @Test
+    public void leavesResourcePacksToTheRpuMod() throws IOException {
+        byte[] mod = utf8("mod");
+        byte[] config = utf8("config");
+        byte[] pack = utf8("pack");
+        byte[] shader = utf8("shader");
+
+        JsonObject manifest = runTool(Map.of(
+                "modrinth.index.json", utf8(indexJson(List.of(indexFile("mods/a.jar", mod, List.of())))),
+                "overrides/config/a.toml", config,
+                "overrides/resourcepacks/RP.zip", pack,
+                "overrides/shaderpacks/S.zip", shader));
+
+        JsonObject channels = manifest.getAsJsonObject("channels");
+        assertEquals(List.of("mods/a.jar"), entriesOf(channels.getAsJsonObject("std").getAsJsonArray("mods")));
+        assertEquals(List.of("config/a.toml"), entriesOf(channels.getAsJsonObject("common").getAsJsonArray("files")),
+                "only configs join common; packs and shaders are the RPU mod's business");
+    }
+
     private static String indexJson(List<JsonObject> files) {
         JsonObject index = new JsonObject();
         index.addProperty("name", "Qinglan-2nd");
