@@ -78,7 +78,6 @@ public class QLSyncPage extends DecoratorAnimatedPage implements DecoratorPage, 
             new ReadOnlyObjectWrapper<>(State.fromTitle(i18n("qinglan.sync.title")));
 
     private final Label instanceLabel = new Label();
-    private final JFXTextField manifestUrlField = new JFXTextField();
     private final JFXButton checkUpdateButton = FXUtils.newRaisedButton(i18n("qinglan.sync.checkUpdate"));
     private final JFXButton applyButton = FXUtils.newRaisedButton(i18n("qinglan.sync.apply"));
     private final Label statusLabel = new Label();
@@ -86,7 +85,7 @@ public class QLSyncPage extends DecoratorAnimatedPage implements DecoratorPage, 
     private final ProgressBar progressBar = new ProgressBar();
     /// Explains why the update controls are disabled; hidden for pack instances.
     private final Label gateLabel = new Label();
-    private final JFXButton saveUrlButton = new JFXButton(i18n("qinglan.sync.save"));
+
     private final VBox optionalBox = new VBox(4);
     private final Label seedInfoLabel = new Label();
     private final JFXTextField seedNameField = new JFXTextField();
@@ -104,26 +103,11 @@ public class QLSyncPage extends DecoratorAnimatedPage implements DecoratorPage, 
     private boolean syncable;
 
     public QLSyncPage() {
-        saveUrlButton.setOnAction(e -> saveManifestUrl());
-
-        HBox urlRow = new HBox(8, manifestUrlField, saveUrlButton);
-        HBox.setHgrow(manifestUrlField, Priority.ALWAYS);
-        urlRow.setAlignment(Pos.CENTER_LEFT);
-
         applyButton.setDisable(true);
         HBox actionsRow = new HBox(16, checkUpdateButton, applyButton);
         actionsRow.setAlignment(Pos.CENTER_LEFT);
         checkUpdateButton.setOnAction(e -> checkUpdate());
         applyButton.setOnAction(e -> applyUpdate());
-
-        // Editing the manifest URL invalidates the previously fetched manifest:
-        // applying must never sync the old manifest against the new URL. The field
-        // listeners also fire when a state load repopulates it, which is harmless
-        // because nothing has been fetched by then anyway.
-        manifestUrlField.textProperty().addListener((observable, oldValue, newValue) -> {
-            fetchedManifest = null;
-            applyButton.setDisable(true);
-        });
 
         seedStartButton.setDisable(true);
         seedNameField.setPromptText(i18n("qinglan.sync.seed.instance"));
@@ -137,7 +121,6 @@ public class QLSyncPage extends DecoratorAnimatedPage implements DecoratorPage, 
 
         VBox content = new VBox(12,
                 createTitleLabel(i18n("qinglan.sync.instanceTitle")), instanceLabel,
-                createTitleLabel(i18n("qinglan.sync.manifestUrl")), urlRow,
                 actionsRow, statusLabel, progressLabel, progressBar, gateLabel,
                 createTitleLabel(i18n("qinglan.sync.optional")), optionalBox,
                 createTitleLabel(i18n("qinglan.sync.seed.title")), new VBox(8, seedInfoRow, seedRow));
@@ -210,8 +193,6 @@ public class QLSyncPage extends DecoratorAnimatedPage implements DecoratorPage, 
         gateLabel.setStyle("-fx-text-fill: -monet-error;");
 
         checkUpdateButton.setDisable(!syncable);
-        manifestUrlField.setDisable(!syncable);
-        saveUrlButton.setDisable(!syncable);
         if (!syncable) {
             fetchedManifest = null;
             applyButton.setDisable(true);
@@ -242,49 +223,17 @@ public class QLSyncPage extends DecoratorAnimatedPage implements DecoratorPage, 
                 loaded = QLSyncState.empty();
             }
             instanceState = loaded;
-            if (loaded.manifestUrl != null && !loaded.manifestUrl.isBlank())
-                manifestUrlField.setText(loaded.manifestUrl);
-            else if (manifestUrlField.getText() == null || manifestUrlField.getText().isBlank())
-                manifestUrlField.setText(QLConstants.DEFAULT_MANIFEST_URL);
             consumer.accept(loaded);
         }).start();
     }
 
-    private void saveManifestUrl() {
-        refreshInstanceHint();
-        Path directory = runDirectory;
-        if (directory == null) {
-            Controllers.dialog(i18n("qinglan.sync.instance.none"), i18n("message.error"), MessageDialogPane.MessageType.ERROR);
-            return;
-        }
-        String url = manifestUrlField.getText();
-        if (url == null || url.isBlank()) {
-            Controllers.dialog(i18n("qinglan.sync.urlInvalid"), i18n("message.error"), MessageDialogPane.MessageType.ERROR);
-            return;
-        }
-        String normalized = url.trim();
-        // File IO stays off the FX thread; a load failure falls back to a fresh
-        // state so the URL is still persisted.
-        Task.supplyAsync(Schedulers.io(), () -> {
-            QLSyncState persisted;
-            try {
-                persisted = QLSyncState.load(directory);
-            } catch (IOException e) {
-                LOG.warning("Cannot load Qinglan state of " + directory, e);
-                persisted = QLSyncState.empty();
-            }
-            persisted.manifestUrl = normalized;
-            persisted.save(directory);
-            return true;
-        }).whenComplete(Schedulers.javafx(), (saved, exception) -> {
-            if (exception != null) {
-                Controllers.dialog(i18n("qinglan.sync.save.error", describe(exception)),
-                        i18n("message.error"), MessageDialogPane.MessageType.ERROR);
-                return;
-            }
-            instanceState = null; // force a state reload before the next action
-            Controllers.showToast(i18n("qinglan.sync.save.done"));
-        }).start();
+    /// Manifest URL of an instance: whatever the instance recorded (a seeded instance
+    /// carries the URL of its pack) or the value baked into this build. It is deliberately
+    /// not user-editable -- the page shows no URL at all.
+    private static String manifestUrl(@Nullable QLSyncState state) {
+        if (state != null && state.manifestUrl != null && !state.manifestUrl.isBlank())
+            return state.manifestUrl;
+        return QLConstants.DEFAULT_MANIFEST_URL;
     }
 
     private void checkUpdate() {
@@ -304,7 +253,7 @@ public class QLSyncPage extends DecoratorAnimatedPage implements DecoratorPage, 
                 return;
             }
 
-            QLManifestFetcher.createFetchTask(manifestUrlField.getText())
+            QLManifestFetcher.createFetchTask(manifestUrl(loaded))
                     .whenComplete(Schedulers.javafx(), (result, exception) -> {
                         busy = false;
                         checkUpdateButton.setDisable(false);
@@ -487,7 +436,7 @@ public class QLSyncPage extends DecoratorAnimatedPage implements DecoratorPage, 
 
         Path zipPath = seedZipPath;
         Modpack modpack = seedModpack;
-        String manifestUrl = manifestUrlField.getText();
+        String manifestUrl = manifestUrl(instanceState);
 
         busy = true;
         seedChooseButton.setDisable(true);
