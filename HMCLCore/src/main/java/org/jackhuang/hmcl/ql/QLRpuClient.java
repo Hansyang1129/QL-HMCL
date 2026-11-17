@@ -143,18 +143,32 @@ public final class QLRpuClient {
         return manifest;
     }
 
-    /// @return ids of the objects the backend still wants this client to fetch
-    public @Unmodifiable List<String> requiredObjects(String releaseId, List<String> objectIds) throws IOException {
+    /// Asks the backend which objects still have to be fetched.
+    ///
+    /// @param releaseId the release being checked
+    /// @param entries   every object of the release
+    /// @param validIds  ids whose cached copy already verifies; the backend wants everything else
+    /// @return ids of the objects this client still has to download
+    public @Unmodifiable List<String> requiredObjects(String releaseId, List<Entry> entries,
+                                                      java.util.Set<String> validIds) throws IOException {
+        com.google.gson.JsonArray objects = new com.google.gson.JsonArray();
+        for (Entry entry : entries) {
+            JsonObject item = new JsonObject();
+            item.addProperty("objectId", entry.objectId());
+            item.addProperty("cipherSha256", entry.cipherSha256());
+            item.addProperty("valid", validIds.contains(entry.objectId()));
+            objects.add(item);
+        }
         JsonObject request = new JsonObject();
-        request.add("objects", GSON.toJsonTree(objectIds));
+        request.add("objects", objects);
         JsonObject response = GSON.fromJson(
                 execute("POST", DEFAULT_BASE + "/releases/" + releaseId + "/check", request.toString(), token),
                 JsonObject.class);
         if (response == null || !response.has("requiredObjectIds"))
-            return objectIds;
+            return entries.stream().map(Entry::objectId).toList();
         List<String> required = GSON.fromJson(response.get("requiredObjectIds"),
                 new TypeToken<List<String>>() { }.getType());
-        return required == null ? objectIds : List.copyOf(required);
+        return required == null ? entries.stream().map(Entry::objectId).toList() : List.copyOf(required);
     }
 
     /// @return download tickets (object id to time-limited URL) for the requested objects
@@ -199,7 +213,9 @@ public final class QLRpuClient {
             connection.setRequestProperty("Authorization", "Bearer " + token);
         if (!(connection instanceof HttpURLConnection http))
             throw new IOException("RPU requires HTTP: " + url);
-        http = NetworkUtils.resolveConnection(http);
+        // The method and body must be in place before anything connects: resolveConnection()
+        // (and getResponseCode()) opens the socket, and HttpURLConnection then refuses further
+        // method changes with "connect in progress".
         http.setRequestMethod(method);
         if (body != null) {
             byte[] bytes = body.getBytes(StandardCharsets.UTF_8);

@@ -37,6 +37,7 @@ import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.function.BiConsumer;
 import java.util.logging.Level;
@@ -163,10 +164,12 @@ public final class QLRpuUpdater {
 
         QLRpuClient.Manifest manifest = client.manifest(latest);
         List<QLRpuClient.Entry> entries = manifest.objects();
-        List<String> ids = new ArrayList<>();
-        for (QLRpuClient.Entry entry : entries)
-            ids.add(entry.objectId());
-        List<String> required = client.requiredObjects(latest, ids);
+        java.util.Set<String> validIds = new java.util.HashSet<>();
+        for (QLRpuClient.Entry entry : entries) {
+            if (matches(objects.resolve(entry.objectId() + ".obj"), entry.cipherSha256()))
+                validIds.add(entry.objectId());
+        }
+        List<String> required = client.requiredObjects(latest, entries, validIds);
 
         int total = required.size();
         int downloaded = 0;
@@ -175,7 +178,16 @@ public final class QLRpuUpdater {
         List<String> failedIds = new ArrayList<>();
 
         if (!required.isEmpty()) {
-            List<QLRpuClient.Ticket> tickets = client.tickets(latest, null, required);
+            String sourceId = null;
+            for (Map<String, Object> source : client.sources(latest)) {
+                Object id = source.get("id");
+                Object available = source.get("available");
+                if (id instanceof String text && !text.isBlank() && Boolean.TRUE.equals(available)) {
+                    sourceId = text;
+                    break;
+                }
+            }
+            List<QLRpuClient.Ticket> tickets = client.tickets(latest, sourceId, required);
             int finished = 0;
             for (QLRpuClient.Ticket ticket : tickets) {
                 QLRpuClient.Entry entry = entries.stream()
@@ -185,7 +197,7 @@ public final class QLRpuUpdater {
                     failed++;
                     failedIds.add(ticket.objectId());
                 } else {
-                    Path target = objects.resolve(entry.cipherSha256() + ".obj");
+                    Path target = objects.resolve(entry.objectId() + ".obj");
                     try {
                         if (matches(target, entry.cipherSha256())) {
                             unchanged++;
