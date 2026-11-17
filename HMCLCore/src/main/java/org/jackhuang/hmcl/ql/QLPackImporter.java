@@ -34,6 +34,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -59,7 +60,10 @@ import java.util.zip.ZipFile;
 @NotNullByDefault
 public final class QLPackImporter {
 
+    /// Logger for recoverable per-file failures; the outcome still reports them.
     private static final Logger LOG = Logger.getLogger(QLPackImporter.class.getName());
+
+    /// Digest algorithm used by the pack index for content checks.
     private static final String SHA1 = "SHA-1";
 
     private QLPackImporter() {
@@ -78,6 +82,12 @@ public final class QLPackImporter {
                           int failed, @Unmodifiable List<String> failedPaths) {
     }
 
+    /// One file this run intends to have on disk.
+    ///
+    /// @param channel     the manifest channel the entry belongs to
+    /// @param logicalPath the manifest path ({@code mods/x.jar}, {@code config/y.toml}...)
+    /// @param entry       the manifest entry carrying the expected SHA-1 and download URLs
+    /// @param target      the absolute path the content must end up at
     private record PlannedFile(String channel, String logicalPath, QLManifest.FileEntry entry, Path target) {
     }
 
@@ -107,7 +117,7 @@ public final class QLPackImporter {
             LOG.log(Level.WARNING, "Cannot load Qinglan state, starting from an empty one", e);
             existing = QLSyncState.empty();
         }
-        Set<String> enabledOptional = existing.enabledOptionalGroups();
+        Set<String> optionalGroups = new LinkedHashSet<>();
 
         List<PlannedFile> planned = new ArrayList<>();
         int skippedRpu = 0;
@@ -117,7 +127,11 @@ public final class QLPackImporter {
         for (QLManifest.FileEntry entry : manifest.channelOrThrow(QLManifest.CHANNEL_MODS).mods) {
             String logical = Objects.requireNonNull(entry.path, "manifest path");
             String raw = logical.substring(logical.indexOf('/', 1) + 1);
-            boolean enabled = entry.optional == null || enabledOptional.contains(entry.optional);
+            if (entry.optional != null)
+                optionalGroups.add(entry.optional);
+            // A seed pack is applied exactly as shipped: a fresh instance has no optional
+            // record yet, and parking the pack's own mods would silently change the pack.
+            boolean enabled = true;
             planned.add(new PlannedFile(QLManifest.CHANNEL_MODS, logical, entry,
                     modsFolder.resolve(enabled ? raw : raw + QLConstants.DISABLED_SUFFIX)));
         }
@@ -170,6 +184,7 @@ public final class QLPackImporter {
         }
 
         existing.activeChannel = QLManifest.CHANNEL_MODS;
+        existing.enabledOptional = new ArrayList<>(optionalGroups); // every group ships enabled
         existing.replaceTracked(tracked);
         existing.packVersion = manifest.packVersionOrDefault();
         if (manifestUrl != null && !manifestUrl.isBlank())
@@ -177,7 +192,7 @@ public final class QLPackImporter {
         existing.save(gameDir);
 
         try {
-            QLDblPack.scan(gameDir, manifest, QLManifest.CHANNEL_MODS, enabledOptional).save(gameDir);
+            QLDblPack.scan(gameDir, manifest, QLManifest.CHANNEL_MODS, optionalGroups).save(gameDir);
         } catch (IOException | RuntimeException e) {
             LOG.log(Level.WARNING, "Cannot regenerate the dblpack inventory", e);
         }
@@ -186,11 +201,13 @@ public final class QLPackImporter {
                 List.copyOf(failedPaths));
     }
 
+    /// Reports one finished file to the optional progress listener.
     private static void notifyProgress(@Nullable BiConsumer<Integer, Integer> listener, int finished, int total) {
         if (listener != null && total > 0)
             listener.accept(finished, total);
     }
 
+    /// @return whether {@code file} exists and its SHA-1 equals the expected one
     private static boolean matches(Path file, String expectedSha1) throws IOException {
         return Files.isRegularFile(file) && DigestUtils.digestToString(SHA1, file).equals(expectedSha1);
     }
@@ -235,6 +252,9 @@ public final class QLPackImporter {
         return false;
     }
 
+    /// Checks a freshly written file against the pack hash, deleting it when it is wrong.
+    ///
+    /// @return whether the content matched
     private static boolean verify(Path file, String expectedSha1) throws IOException {
         if (matches(file, expectedSha1))
             return true;
@@ -242,6 +262,9 @@ public final class QLPackImporter {
         return false;
     }
 
+    /// Reads an entry from the pack's {@code overrides/} payload.
+    ///
+    /// @return the bytes, or {@code null} when the pack does not embed this file
     private static byte @Nullable [] readOverride(ZipFile zip, String logicalPath) throws IOException {
         ZipEntry entry = zip.getEntry(logicalPath);
         if (entry == null)
@@ -253,17 +276,25 @@ public final class QLPackImporter {
         }
     }
 
+    /// Downloads one URL into the target through the launcher's network stack (proxy,
+    /// timeouts and TLS trust all come from there), following redirects.
     private static void downloadTo(URI uri, Path target) throws IOException {
         URLConnection connection = NetworkUtils.createConnection(uri);
         connection.setConnectTimeout(15_000);
         connection.setReadTimeout(60_000);
         if (connection instanceof HttpURLConnection http)
             connection = NetworkUtils.resolveConnection(http);
-        try (InputStream in = connection.getInputStream()) {
-            writeAtomically(target, in.readAllBytes());
+        // Stream straight to the temporary file: pack entries can be tens of megabytes and
+        // buffering them in heap just to hash them afterwards is pointless.
+        Path temp = target.resolveSibling(target.getFileName() + ".qlimport");
+        try (InputStream in = connection.getInputStream();
+             OutputStream out = Files.newOutputStream(temp)) {
+            in.transferTo(out);
         }
+        moveReplacing(temp, target);
     }
 
+    /// Writes through a sibling temporary file so a crash never leaves a half file behind.
     private static void writeAtomically(Path target, byte[] content) throws IOException {
         Path temp = target.resolveSibling(target.getFileName() + ".qlimport");
         try (OutputStream out = Files.newOutputStream(temp)) {
@@ -272,6 +303,7 @@ public final class QLPackImporter {
         moveReplacing(temp, target);
     }
 
+    /// Moves a finished temporary file over its target, atomically when the file system allows.
     private static void moveReplacing(Path source, Path target) throws IOException {
         try {
             Files.move(source, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);

@@ -41,7 +41,10 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 @NotNullByDefault
 public final class QLPackImporterTest {
 
+    /// Instance run directory the pack is applied to.
     private @TempDir Path gameDir;
+
+    /// Scratch directory that holds the synthesized packs.
     private @TempDir Path packDir;
 
     /// Applies a pack onto an existing instance: stale files are replaced from the overrides
@@ -94,6 +97,7 @@ public final class QLPackImporterTest {
                 "a null source keeps the previously recorded one");
     }
 
+    /// Builds a minimal {@code .mrpack} with the given overrides payload and index entries.
     private Path buildPack(Map<String, byte[]> payload, List<JsonObject> files) throws IOException {
         JsonObject index = new JsonObject();
         index.addProperty("name", "Qinglan-2nd");
@@ -117,6 +121,7 @@ public final class QLPackImporterTest {
         return zip;
     }
 
+    /// Builds one {@code modrinth.index.json} file entry (path, size, SHA-1, no downloads).
     private static JsonObject indexFile(String path, byte[] content) {
         JsonObject object = new JsonObject();
         object.addProperty("path", path);
@@ -128,11 +133,13 @@ public final class QLPackImporterTest {
         return object;
     }
 
+    /// Asserts the file content equals the expected bytes (compared as UTF-8 text).
     private static void assertArrayEqualsContent(byte[] expected, Path file) throws IOException {
         assertEquals(new String(expected, StandardCharsets.UTF_8),
                 Files.readString(file, StandardCharsets.UTF_8));
     }
 
+    /// @return the UTF-8 bytes of the given text
     private static byte[] utf8(String text) {
         return text.getBytes(StandardCharsets.UTF_8);
     }
