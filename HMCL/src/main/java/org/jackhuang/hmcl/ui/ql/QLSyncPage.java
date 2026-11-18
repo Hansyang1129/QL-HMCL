@@ -36,6 +36,7 @@ import org.jackhuang.hmcl.modpack.Modpack;
 import org.jackhuang.hmcl.modpack.modrinth.ModrinthModpackProvider;
 import org.jackhuang.hmcl.ql.QLPackGuard;
 import org.jackhuang.hmcl.ql.QLPackSync;
+import org.jackhuang.hmcl.ql.QLRpuBridge;
 import org.jackhuang.hmcl.ql.QLSyncState;
 import org.jackhuang.hmcl.setting.GameDirectoryManager;
 import org.jackhuang.hmcl.task.Schedulers;
@@ -72,6 +73,7 @@ public class QLSyncPage extends DecoratorAnimatedPage implements DecoratorPage, 
             new ReadOnlyObjectWrapper<>(State.fromTitle(i18n("qinglan.sync.title")));
 
     private final Label instanceLabel = new Label();
+    private final JFXButton rpuButton = FXUtils.newRaisedButton(i18n("qinglan.rpu.wake"));
     private final Label statusLabel = new Label();
     private final Label progressLabel = new Label();
     private final ProgressBar progressBar = new ProgressBar();
@@ -101,11 +103,16 @@ public class QLSyncPage extends DecoratorAnimatedPage implements DecoratorPage, 
         HBox seedInfoRow = new HBox(0, seedInfoLabel);
         seedInfoRow.setAlignment(Pos.CENTER_LEFT);
 
+        rpuButton.setOnAction(event -> wakeRpuUpdate());
+        HBox rpuRow = new HBox(16, rpuButton);
+        rpuRow.setAlignment(Pos.CENTER_LEFT);
+
         VBox content = new VBox(12,
                 createTitleLabel(i18n("qinglan.sync.instanceTitle")), instanceLabel, gateLabel,
+                createTitleLabel(i18n("qinglan.rpu.title")), rpuRow, statusLabel,
                 createTitleLabel(i18n("qinglan.sync.seed.title")), new VBox(8, seedInfoRow, seedRow),
                 createTitleLabel(i18n("qinglan.sync.optional")), optionalBox,
-                statusLabel, progressLabel, progressBar);
+                progressLabel, progressBar);
         content.setPadding(new Insets(16));
         content.setFillWidth(true);
 
@@ -173,6 +180,7 @@ public class QLSyncPage extends DecoratorAnimatedPage implements DecoratorPage, 
         gateLabel.setManaged(!syncable);
         gateLabel.setWrapText(true);
         gateLabel.setStyle("-fx-text-fill: -monet-error;");
+        rpuButton.setDisable(!syncable || !QLRpuBridge.isInstalled());
     }
 
     /// Loads the per-instance state for the currently selected instance asynchronously and
@@ -241,6 +249,60 @@ public class QLSyncPage extends DecoratorAnimatedPage implements DecoratorPage, 
         if (repository == null || !repository.isLoaded())
             return null;
         return repository.getSelectedInstance();
+    }
+
+    /// Wakes the closed-source RPU updater through {@link QLRpuBridge}: the launcher owns the
+    /// button and the progress bar, RPU owns everything else.
+    private void wakeRpuUpdate() {
+        if (busy)
+            return;
+
+        refreshInstanceHint();
+        Path directory = runDirectory;
+        if (directory == null) {
+            Controllers.dialog(i18n("qinglan.sync.instance.none"), i18n("message.error"),
+                    MessageDialogPane.MessageType.ERROR);
+            return;
+        }
+        if (!syncable) {
+            Controllers.dialog(i18n("qinglan.sync.notSyncable"), i18n("message.error"),
+                    MessageDialogPane.MessageType.ERROR);
+            return;
+        }
+        if (!QLRpuBridge.isInstalled()) {
+            Controllers.dialog(i18n("qinglan.rpu.notInstalled"), i18n("message.info"),
+                    MessageDialogPane.MessageType.WARNING);
+            return;
+        }
+
+        busy = true;
+        rpuButton.setDisable(true);
+        statusLabel.setText(i18n("qinglan.rpu.waking"));
+        showIndeterminateProgress(true);
+        Task.supplyAsync(Schedulers.io(), () -> {
+            QLRpuBridge.startUpdate(directory, (finished, total) -> runInFX(() -> {
+                if (total > 0) {
+                    progressBar.setProgress((double) finished / total);
+                    progressLabel.setText(i18n("qinglan.sync.progress", finished, total));
+                } else {
+                    progressBar.setProgress(-1);
+                    progressLabel.setText(i18n("qinglan.rpu.updating"));
+                }
+            }));
+            return true;
+        }).whenComplete(Schedulers.javafx(), (ignored, exception) -> {
+            busy = false;
+            rpuButton.setDisable(!syncable || !QLRpuBridge.isInstalled());
+            showIndeterminateProgress(false);
+            if (exception != null) {
+                statusLabel.setText("");
+                Controllers.dialog(i18n("qinglan.rpu.error", describe(exception)),
+                        i18n("message.error"), MessageDialogPane.MessageType.ERROR);
+            } else {
+                statusLabel.setText(i18n("qinglan.rpu.done"));
+                Controllers.showToast(i18n("qinglan.rpu.done"));
+            }
+        }).start();
     }
 
     /// Reads the picked pack and reports whether the instance is behind it.
