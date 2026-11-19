@@ -55,6 +55,8 @@ import org.jetbrains.annotations.Nullable;
 import java.io.IOException;
 import java.util.stream.Stream;
 import java.util.Set;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Comparator;
 import java.nio.file.Files;
 import java.nio.charset.Charset;
@@ -73,7 +75,11 @@ public class QLSyncPage extends DecoratorAnimatedPage implements DecoratorPage, 
             new ReadOnlyObjectWrapper<>(State.fromTitle(i18n("qinglan.sync.title")));
 
     private final Label instanceLabel = new Label();
-    private final JFXButton rpuButton = FXUtils.newRaisedButton(i18n("qinglan.rpu.wake"));
+    private final JFXButton rpuButton = FXUtils.newRaisedButton(i18n("qinglan.rpu.check"));
+    private final ProgressBar rpuProgressBar = new ProgressBar();
+    private final Label rpuStatusLabel = new Label();
+    private final Label rpuLogLabel = new Label();
+    private final List<String> rpuLogLines = new ArrayList<>();
     private final Label statusLabel = new Label();
     private final Label progressLabel = new Label();
     private final ProgressBar progressBar = new ProgressBar();
@@ -104,12 +110,20 @@ public class QLSyncPage extends DecoratorAnimatedPage implements DecoratorPage, 
         seedInfoRow.setAlignment(Pos.CENTER_LEFT);
 
         rpuButton.setOnAction(event -> wakeRpuUpdate());
-        HBox rpuRow = new HBox(16, rpuButton);
+        rpuProgressBar.setPrefWidth(Double.MAX_VALUE);
+        rpuProgressBar.setVisible(false);
+        rpuProgressBar.setManaged(false);
+        rpuStatusLabel.setWrapText(true);
+        rpuLogLabel.setWrapText(true);
+        HBox rpuRow = new HBox(16, rpuStatusLabel, rpuButton);
+        HBox.setHgrow(rpuStatusLabel, Priority.ALWAYS);
         rpuRow.setAlignment(Pos.CENTER_LEFT);
+        refreshRpuPlaceholder();
 
         VBox content = new VBox(12,
                 createTitleLabel(i18n("qinglan.sync.instanceTitle")), instanceLabel, gateLabel,
-                createTitleLabel(i18n("qinglan.rpu.title")), rpuRow, statusLabel,
+                createTitleLabel(i18n("qinglan.rpu.title")), createHintLabel(i18n("qinglan.rpu.desc")),
+                rpuProgressBar, rpuRow, rpuLogLabel, statusLabel,
                 createTitleLabel(i18n("qinglan.sync.seed.title")), new VBox(8, seedInfoRow, seedRow),
                 createTitleLabel(i18n("qinglan.sync.optional")), optionalBox,
                 progressLabel, progressBar);
@@ -150,6 +164,13 @@ public class QLSyncPage extends DecoratorAnimatedPage implements DecoratorPage, 
         return new Label(text);
     }
 
+    private static Label createHintLabel(String text) {
+        Label label = new Label(text);
+        label.setWrapText(true);
+        label.getStyleClass().add("ql-hint");
+        return label;
+    }
+
     private void refreshInstanceHint() {
         HMCLGameRepository repository = GameDirectoryManager.getSelectedRepository();
         String version = repository.getSelectedInstance();
@@ -180,7 +201,7 @@ public class QLSyncPage extends DecoratorAnimatedPage implements DecoratorPage, 
         gateLabel.setManaged(!syncable);
         gateLabel.setWrapText(true);
         gateLabel.setStyle("-fx-text-fill: -monet-error;");
-        rpuButton.setDisable(!syncable || !QLRpuBridge.isInstalled());
+        rpuButton.setDisable(!syncable);
     }
 
     /// Loads the per-instance state for the currently selected instance asynchronously and
@@ -251,8 +272,18 @@ public class QLSyncPage extends DecoratorAnimatedPage implements DecoratorPage, 
         return repository.getSelectedInstance();
     }
 
-    /// Wakes the closed-source RPU updater through {@link QLRpuBridge}: the launcher owns the
-    /// button and the progress bar, RPU owns everything else.
+    /// Placeholder shown while no RPU client has subscribed: the card is explicitly reserved
+    /// rather than pretending to know anything.
+    private void refreshRpuPlaceholder() {
+        if (QLRpuBridge.isInstalled())
+            return;
+        rpuStatusLabel.setText(i18n("qinglan.rpu.placeholders"));
+        rpuLogLabel.setText(i18n("qinglan.rpu.logPlaceholder"));
+        rpuProgressBar.setVisible(false);
+        rpuProgressBar.setManaged(false);
+    }
+
+    /// RPU 接口挂点之「更新触发」：闭源客户端订阅后由它自己读写 resourcepacks。
     private void wakeRpuUpdate() {
         if (busy)
             return;
@@ -270,37 +301,55 @@ public class QLSyncPage extends DecoratorAnimatedPage implements DecoratorPage, 
             return;
         }
         if (!QLRpuBridge.isInstalled()) {
-            Controllers.dialog(i18n("qinglan.rpu.notInstalled"), i18n("message.info"),
+            rpuStatusLabel.setText(i18n("qinglan.rpu.notConnected"));
+            Controllers.dialog(i18n("qinglan.rpu.notConnected"), i18n("message.info"),
                     MessageDialogPane.MessageType.WARNING);
             return;
         }
 
         busy = true;
         rpuButton.setDisable(true);
-        statusLabel.setText(i18n("qinglan.rpu.waking"));
-        showIndeterminateProgress(true);
+        QLRpuBridge.Sink sink = new QLRpuBridge.Sink() {
+            @Override
+            public void status(@Nullable String text, @Nullable Double percent) {
+                runInFX(() -> {
+                    if (text != null)
+                        rpuStatusLabel.setText(text);
+                    if (percent == null) {
+                        rpuProgressBar.setVisible(false);
+                        rpuProgressBar.setManaged(false);
+                    } else {
+                        rpuProgressBar.setVisible(true);
+                        rpuProgressBar.setManaged(true);
+                        rpuProgressBar.setProgress(Math.max(0.0, Math.min(1.0, percent / 100.0)));
+                    }
+                });
+            }
+
+            @Override
+            public void log(String line) {
+                runInFX(() -> {
+                    if (rpuLogLines.size() >= 20)
+                        rpuLogLines.remove(0);
+                    rpuLogLines.add(line == null ? "" : line.stripTrailing());
+                    rpuLogLabel.setText(String.join("\n", rpuLogLines));
+                });
+            }
+        };
+
         Task.supplyAsync(Schedulers.io(), () -> {
-            QLRpuBridge.startUpdate(directory, (finished, total) -> runInFX(() -> {
-                if (total > 0) {
-                    progressBar.setProgress((double) finished / total);
-                    progressLabel.setText(i18n("qinglan.sync.progress", finished, total));
-                } else {
-                    progressBar.setProgress(-1);
-                    progressLabel.setText(i18n("qinglan.rpu.updating"));
-                }
-            }));
+            QLRpuBridge.startUpdate(directory, sink);
             return true;
         }).whenComplete(Schedulers.javafx(), (ignored, exception) -> {
             busy = false;
-            rpuButton.setDisable(!syncable || !QLRpuBridge.isInstalled());
-            showIndeterminateProgress(false);
+            rpuButton.setDisable(!syncable);
             if (exception != null) {
-                statusLabel.setText("");
+                rpuStatusLabel.setText(i18n("qinglan.rpu.error", describe(exception)));
                 Controllers.dialog(i18n("qinglan.rpu.error", describe(exception)),
                         i18n("message.error"), MessageDialogPane.MessageType.ERROR);
             } else {
-                statusLabel.setText(i18n("qinglan.rpu.done"));
-                Controllers.showToast(i18n("qinglan.rpu.done"));
+                rpuStatusLabel.setText(i18n("qinglan.rpu.done"));
+                rpuProgressBar.setProgress(1.0);
             }
         }).start();
     }

@@ -24,43 +24,51 @@ import java.nio.file.Path;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * The only contact point between this launcher and the RPU resource-pack updater.
+ * The three interface points the launcher keeps for the closed-source RPU client.
  *
- * <p>RPU is closed source and owns its own cache, protocol and verification, so the launcher
- * deliberately does not reimplement any of that. It exposes two hooks instead:</p>
- * <ul>
- *     <li>an update trigger -- the sync page shows one button and calls {@link #startUpdate};</li>
- *     <li>a progress sink -- whatever the updater hands to {@link ProgressSink} is rendered as
- *     the page's progress bar.</li>
- * </ul>
+ * <p>The RPU client owns {@code resourcepacks/**}, its {@code qlrpu/**} store and
+ * {@code config/qlrpu-client.json}; it reads, writes and updates them itself. The launcher
+ * therefore implements none of its protocol -- it only offers:</p>
+ * <ol>
+ *     <li>an update trigger: the page's button calls {@link #startUpdate};</li>
+ *     <li>a progress projection: {@link Sink#status} paints status text and a percentage;</li>
+ *     <li>a log projection: {@link Sink#log} appends one line to the on-page log box.</li>
+ * </ol>
  *
- * <p>The updater registers itself once at startup, e.g. from the RPU side:
- * {@code QLRpuBridge.install((gameDir, progress) -> {...});}. Without a registered handler the
- * page reports that the interface is not loaded and keeps the button disabled.</p>
+ * <p>Registration mirrors the native Qinglan launcher's hook: once at startup,
+ * {@code QLRpuBridge.install((gameDir, sink) -> {...});}. Without a registered handler the
+ * card stays a placeholder and the button explains that the interface is reserved.</p>
  */
 @NotNullByDefault
 public final class QLRpuBridge {
 
-    /// Receives progress updates from the updater. Coordinates are free-form: a percentage
-    /// ({@code finished}/{@code total}) or a byte count, the page renders the ratio.
-    @FunctionalInterface
-    public interface ProgressSink {
-        /// @param finished units finished so far
-        /// @param total    total units of the run, or {@code 0} when unknown
-        void progress(long finished, long total);
+    /// The launcher-side projections the RPU client reports into.
+    public interface Sink {
+        /**
+         * Paints the RPU status line and the progress bar.
+         *
+         * @param text    status text; {@code null} keeps the placeholder
+         * @param percent progress in {@code 0..100}; {@code null} hides the progress bar
+         */
+        void status(@Nullable String text, @Nullable Double percent);
+
+        /// Appends one log line to the RPU log box.
+        ///
+        /// @param line the line to show; the page keeps the last few
+        void log(String line);
     }
 
-    /// What the closed-source updater implements to be triggerable from the launcher.
+    /// What the closed-source RPU client implements to be triggerable from the launcher.
     @FunctionalInterface
     public interface UpdateHandler {
         /**
-         * Performs (or starts) one update run.
+         * Runs (or starts) one resource-pack update.
          *
-         * @param gameDir  the instance's run directory
-         * @param progress sink the updater reports progress to; called from any thread
+         * @param gameDir the instance's run directory
+         * @param sink    the projections the updater reports to; called from any thread
          * @throws Exception when the update cannot be started; the message is shown to the user
          */
-        void startUpdate(Path gameDir, ProgressSink progress) throws Exception;
+        void startUpdate(Path gameDir, Sink sink) throws Exception;
     }
 
     /// The registered updater, if any.
@@ -69,14 +77,13 @@ public final class QLRpuBridge {
     private QLRpuBridge() {
     }
 
-    /// Registers the updater; a later call replaces the previous handler.
-    ///
-    /// @param handler the updater implementation
+    /// Registers the updater; a later call replaces the previous handler and {@code null}
+    /// unregisters it.
     public static void install(@Nullable UpdateHandler handler) {
         HANDLER.set(handler);
     }
 
-    /// @return whether an updater has registered itself
+    /// @return whether the RPU client has registered itself
     public static boolean isInstalled() {
         return HANDLER.get() != null;
     }
@@ -84,14 +91,14 @@ public final class QLRpuBridge {
     /**
      * Triggers one update run through the registered updater.
      *
-     * @param gameDir  the instance's run directory
-     * @param progress sink the updater reports progress to
+     * @param gameDir the instance's run directory
+     * @param sink    the projections to report into
      * @throws Exception when no updater is installed or the updater itself fails
      */
-    public static void startUpdate(Path gameDir, ProgressSink progress) throws Exception {
+    public static void startUpdate(Path gameDir, Sink sink) throws Exception {
         UpdateHandler handler = HANDLER.get();
         if (handler == null)
-            throw new IllegalStateException("The RPU update interface is not loaded");
-        handler.startUpdate(gameDir, progress);
+            throw new IllegalStateException("The RPU client is not connected");
+        handler.startUpdate(gameDir, sink);
     }
 }
