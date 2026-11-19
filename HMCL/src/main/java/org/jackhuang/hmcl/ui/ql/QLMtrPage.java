@@ -648,66 +648,76 @@ public class QLMtrPage extends DecoratorAnimatedPage implements DecoratorPage, P
         results.getChildren().setAll(card(block(QLMtr.primaryName(route.name()),
                 QLMtr.routeDirection(route.name()), route.color(), List.of())));
 
-        List<String> stopIds = new ArrayList<>();
-        for (QLMtr.MtrRouteStop stop : route.stops())
-            stopIds.add(stop.stationId());
-
         int generation = ++routeTimetableGeneration;
         arrivalsInFlight = true;
-        Task.supplyAsync(Schedulers.io(), () -> QLMtr.fetchArrivals(stopIds, 1))
-                .whenComplete(Schedulers.javafx(), (rows, exception) -> {
-                    // Only the newest render may paint, and it must still be
-                    // showing this route; records rebuilt after a refresh are
-                    // equal by value, so the check is an equality one.
-                    if (generation == routeTimetableGeneration)
-                        arrivalsInFlight = false;
-                    if (generation != routeTimetableGeneration)
-                        return;
-                    QLMtr.MtrRoute current = routePicker.selected();
-                    if (current == null || !current.equals(route))
-                        return;
-                    if (rows == null || exception != null) {
-                        results.getChildren().setAll(notice(i18n("qinglan.mtr.failed")));
-                        return;
+        // The arrivals reply carries no station id, only platform rows, so one request per
+        // stop is required to know whose next train it is (see QLMtr.fetchArrivals). This is
+        // what makes each row show that station's nearest train instead of one train's run.
+        Task.supplyAsync(Schedulers.io(), () -> {
+            Map<Integer, QLMtr.MtrArrival> live = new HashMap<>();
+            long now = System.currentTimeMillis();
+            for (int i = 0; i < route.stops().size(); i++) {
+                QLMtr.MtrRouteStop stop = route.stops().get(i);
+                try {
+                    QLMtr.MtrArrival best = null;
+                    for (QLMtr.MtrArrival row : QLMtr.fetchArrivals(List.of(stop.stationId()), 1)) {
+                        if (row.arrival() < now - 60_000)
+                            continue;
+                        if (best == null || row.arrival() < best.arrival())
+                            best = row;
                     }
+                    if (best != null)
+                        live.put(i, best);
+                } catch (java.io.IOException ignored) {
+                    // a single unreachable station falls back to the timetable below
+                }
+            }
+            return live;
+        }).whenComplete(Schedulers.javafx(), (liveRows, exception) -> {
+            if (generation == routeTimetableGeneration)
+                arrivalsInFlight = false;
+            if (generation != routeTimetableGeneration)
+                return;
+            QLMtr.MtrRoute current = routePicker.selected();
+            if (current == null || !current.equals(route))
+                return;
+            if (liveRows == null || exception != null) {
+                results.getChildren().setAll(notice(i18n("qinglan.mtr.failed")));
+                return;
+            }
 
-                    QLMtr.DeparturesData packs = departures;
-                    long now = System.currentTimeMillis();
+            QLMtr.DeparturesData packs = departures;
+            long now = System.currentTimeMillis();
 
-                    // First real-time row per stop id: that stop's fresh next train.
-                    Map<String, QLMtr.MtrArrival> live = new HashMap<>();
-                    for (QLMtr.MtrArrival arrival : rows)
-                        live.putIfAbsent(arrival.platformId(), arrival);
+            List<Node> children = new ArrayList<>();
+            children.add(card(block(QLMtr.primaryName(route.name()),
+                    QLMtr.routeDirection(route.name()), route.color(), List.of())));
+            for (int i = 0; i < route.stops().size(); i++) {
+                QLMtr.MtrRouteStop stop = route.stops().get(i);
+                String nextText = i18n("qinglan.mtr.no.timetable");
 
-                    List<Node> children = new ArrayList<>();
-                    children.add(card(block(QLMtr.primaryName(route.name()),
-                            QLMtr.routeDirection(route.name()), route.color(), List.of())));
-                    for (int i = 0; i < route.stops().size(); i++) {
-                        QLMtr.MtrRouteStop stop = route.stops().get(i);
-                        String nextText = i18n("qinglan.mtr.no.timetable");
+                QLMtr.MtrArrival row = liveRows.get(i);
+                if (row != null) {
+                    nextText = i18n("qinglan.mtr.next.train", minutesText(row.arrival()));
+                } else if (packs != null) {
+                    List<QLMtrTimetable.TimedDeparture> next =
+                            QLMtrTimetable.nextAt(packs, route, i, now, 1);
+                    if (!next.isEmpty())
+                        nextText = i18n("qinglan.mtr.next.train",
+                                minutesText(next.get(0).arrivalAt()));
+                }
+                List<String> tags = new ArrayList<>();
+                tags.add(nextText);
+                tags.add(i18n("qinglan.mtr.platform.tag", stop.platformName()));
 
-                        QLMtr.MtrArrival row = live.get(stop.stationId());
-                        if (row != null && row.arrival() >= now - 60_000) {
-                            nextText = i18n("qinglan.mtr.next.train", minutesText(row.arrival()));
-                        } else if (packs != null) {
-                            List<QLMtrTimetable.TimedDeparture> next =
-                                    QLMtrTimetable.nextAt(packs, route, i, now, 1);
-                            if (!next.isEmpty())
-                                nextText = i18n("qinglan.mtr.next.train",
-                                        minutesText(next.get(0).arrivalAt()));
-                        }
-                        List<String> tags = new ArrayList<>();
-                        tags.add(nextText);
-                        tags.add(i18n("qinglan.mtr.platform.tag", stop.platformName()));
-
-                        String title = stationNames.getOrDefault(stop.stationId(),
-                                QLMtr.primaryName(stop.platformName()));
-                        children.add(card(block(title, null, route.color(), tags)));
-                    }
-                    // One atomic paint of header and rows: appends raced the
-                    // poll cycle into duplicated station cards before.
-                    results.getChildren().setAll(children);
-                }).start();
+                String title = stationNames.getOrDefault(stop.stationId(),
+                        QLMtr.primaryName(stop.platformName()));
+                children.add(card(block(title, null, route.color(), tags)));
+            }
+            // One atomic paint of header and rows: appends raced the poll cycle into
+            // duplicated station cards before.
+            results.getChildren().setAll(children);
+        }).start();
     }
 
     // ---- level 2: route planning ----------------------------------------------
