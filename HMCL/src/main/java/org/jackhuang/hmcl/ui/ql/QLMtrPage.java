@@ -388,12 +388,24 @@ public class QLMtrPage extends DecoratorAnimatedPage implements DecoratorPage, P
         return " · " + i18n(last.stale() ? "qinglan.cache.stale" : "qinglan.cache.hint", time);
     }
 
-    /// Order of the route picker: numeric service number first, then the display name in a
-    /// Chinese collation; lines without a number are pushed to the end.
+    /// Chinese collation used for the route text fields.
+    private static final java.text.Collator ROUTE_COLLATOR =
+            java.text.Collator.getInstance(java.util.Locale.CHINA);
+
+    /// Order of the route picker: numeric service number first, then the display name, then the
+    /// direction (two directions of one line share both), and finally the stable route id.
     private static final Comparator<QLMtr.MtrRoute> ROUTE_ORDER =
             Comparator.comparingInt((QLMtr.MtrRoute route) -> serviceNumber(route.number()))
-                    .thenComparing(route -> QLMtr.primaryName(route.name()),
-                            java.text.Collator.getInstance(java.util.Locale.CHINA));
+                    .thenComparing(route -> QLMtr.primaryName(route.name()), ROUTE_COLLATOR::compare)
+                    .thenComparing(QLMtrPage::routeDirectionText, ROUTE_COLLATOR::compare)
+                    .thenComparing(QLMtr.MtrRoute::id);
+
+    /// @return the direction text of a route, empty when it has none (keeps the comparator
+    ///         null-free)
+    private static String routeDirectionText(QLMtr.MtrRoute route) {
+        String direction = QLMtr.routeDirection(route.name());
+        return direction == null ? "" : direction;
+    }
 
     /// @return the numeric service number, or {@link Integer#MAX_VALUE} when absent/unparsable
     private static int serviceNumber(@org.jetbrains.annotations.Nullable String number) {
