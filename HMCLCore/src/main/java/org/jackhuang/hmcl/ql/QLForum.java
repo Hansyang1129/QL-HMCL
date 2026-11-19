@@ -21,13 +21,13 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import org.jackhuang.hmcl.util.gson.JsonUtils;
-import org.jackhuang.hmcl.util.io.NetworkUtils;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.Unmodifiable;
 
 import java.io.IOException;
 import java.net.URI;
+import java.time.Duration;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
@@ -305,12 +305,20 @@ public final class QLForum {
         return text.length() > 300 ? text.substring(0, 300) : text;
     }
 
-    /// GET with a couple of retries; the forum is served over plain HTTP.
+    /// Freshness of a cached forum listing; articles change far less often.
+    private static final Duration LIST_TTL = Duration.ofMinutes(3);
+
+    /// Freshness of a cached forum article.
+    private static final Duration ARTICLE_TTL = Duration.ofHours(6);
+
+    /// GET through the local cache: a fresh copy answers immediately, and the last copy is
+    /// served when the forum is unreachable instead of failing the page.
     private static String doGetRetry(URI uri) throws IOException {
+        Duration ttl = uri.getPath() != null && uri.getPath().startsWith("/api/") ? LIST_TTL : ARTICLE_TTL;
         IOException last = null;
         for (int attempt = 0; attempt < RETRIES; attempt++) {
             try {
-                return NetworkUtils.doGet(uri);
+                return QLCache.fetch(uri, ttl).body();
             } catch (IOException e) {
                 last = e;
                 try {

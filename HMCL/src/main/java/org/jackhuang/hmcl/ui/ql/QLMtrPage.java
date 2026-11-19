@@ -45,6 +45,7 @@ import javafx.scene.layout.VBox;
 import javafx.scene.text.TextAlignment;
 import javafx.util.Duration;
 import javafx.util.StringConverter;
+import org.jackhuang.hmcl.ql.QLCache;
 import org.jackhuang.hmcl.ql.QLConstants;
 import org.jackhuang.hmcl.ql.QLMtr;
 import org.jackhuang.hmcl.ql.QLMtrRouter;
@@ -71,6 +72,7 @@ import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.Unmodifiable;
 
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -369,9 +371,20 @@ public class QLMtrPage extends DecoratorAnimatedPage implements DecoratorPage, P
             }
             network = result.snapshot();
             departures = result.packs();
-            statusLabel.setText(i18n("qinglan.status.refresh.done", LocalDateTime.now().format(QLConstants.WALL_CLOCK)));
+            statusLabel.setText(i18n("qinglan.status.refresh.done", LocalDateTime.now().format(QLConstants.WALL_CLOCK)) + cacheHint());
             populate();
         }).start();
+    }
+
+    /// @return a suffix naming the cache copy when the last fetch did not come from the
+    ///         network, empty otherwise
+    private static String cacheHint() {
+        QLCache.Response last = QLCache.lastResponse();
+        if (last == null || !last.fromCache())
+            return "";
+        String time = LocalDateTime.ofInstant(last.fetchedAt(), ZoneId.systemDefault())
+                .format(QLConstants.WALL_CLOCK);
+        return " · " + i18n(last.stale() ? "qinglan.cache.stale" : "qinglan.cache.hint", time);
     }
 
     /// Hands the freshly loaded network to the four pickers and re-renders the pages.

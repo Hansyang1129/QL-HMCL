@@ -29,6 +29,7 @@ import org.jetbrains.annotations.Unmodifiable;
 import java.io.IOException;
 import java.net.URLEncoder;
 import java.net.URI;
+import java.time.Duration;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -576,11 +577,20 @@ public final class QLMtr {
         return element;
     }
 
+    /// Freshness of the map snapshot and the departure packs; arrivals are realtime, so they
+    /// only get a short window and fall back to the last copy when the API is down.
+    private static final Duration MAP_TTL = Duration.ofMinutes(2);
+
+    /// Freshness of a cached arrivals query.
+    private static final Duration ARRIVALS_TTL = Duration.ofSeconds(20);
+
+    /// GET through the local cache; see {@link QLCache}.
     private static String doGetRetry(String base, String url) throws IOException {
+        Duration ttl = url.contains("arrivals") ? ARRIVALS_TTL : MAP_TTL;
         IOException last = null;
         for (int attempt = 0; attempt < RETRIES; attempt++) {
             try {
-                return NetworkUtils.doGet(URI.create(base + url));
+                return QLCache.fetch(URI.create(base + url), ttl).body();
             } catch (IOException e) {
                 last = e;
                 if (!sleepBetweenRetries())
