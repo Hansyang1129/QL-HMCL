@@ -515,7 +515,11 @@ public class QLMtrPage extends DecoratorAnimatedPage implements DecoratorPage, P
                         List<Node> inner = new ArrayList<>();
                         inner.add(block(i18n("qinglan.mtr.platform.tag", labels.get(entry.getKey())),
                                 null, 0, List.of()));
-                        for (QLMtr.MtrArrival arrival : entry.getValue())
+                        // The server honours maxCountPerPlatform, but the page renders at
+                        // most TRAINS_PER_PLATFORM rows anyway so a chatty reply cannot grow
+                        // a platform card.
+                        int shown = Math.min(TRAINS_PER_PLATFORM, entry.getValue().size());
+                        for (QLMtr.MtrArrival arrival : entry.getValue().subList(0, shown))
                             inner.add(arrivalRow(arrival));
                         platformCards.add(Map.entry(entry.getKey(), card(new VBox(4, inner.toArray(new Node[0])))));
                     }
