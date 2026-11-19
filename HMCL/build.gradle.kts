@@ -252,6 +252,18 @@ tasks.processResources {
         from(createLocaleNamesResourceBundle.map { it.outputDirectory })
     }
 
+    // Local-only deployment endpoints. The file is gitignored, so the GitHub build simply
+    // has no assets/ql/endpoints.json and ships as an unconfigured shell.
+    val qlEndpoints = rootProject.file("ql-endpoints.json")
+    if (qlEndpoints.isFile) {
+        inputs.file(qlEndpoints)
+        into("assets/ql") {
+            from(qlEndpoints) {
+                rename { "endpoints.json" }
+            }
+        }
+    }
+
     inputs.property("terracotta_version", libs.versions.terracotta)
     doLast {
         upgradeTerracottaConfig.get().checkValid()

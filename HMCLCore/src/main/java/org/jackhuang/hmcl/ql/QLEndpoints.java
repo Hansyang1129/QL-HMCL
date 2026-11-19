@@ -128,7 +128,13 @@ public final class QLEndpoints {
         return parsed;
     }
 
+    /// Classpath location of the endpoints compiled into a local build.
+    private static final String EMBEDDED = "/assets/ql/endpoints.json";
+
     private static Config load() {
+        Config embedded = loadEmbedded();
+        if (embedded != null)
+            return embedded;
         Config empty = new Config(null, null, null, List.of(), List.of());
         Path file = configFile();
         if (!Files.isRegularFile(file))
@@ -151,6 +157,45 @@ public final class QLEndpoints {
             LOG.log(Level.WARNING, "Cannot read the Qinglan endpoint config " + file
                     + "; the launcher stays unconfigured", e);
             return empty;
+        }
+    }
+
+    /// Reads the endpoints baked into this build, if any.
+    ///
+    /// @return the parsed config, or {@code null} when the build carries none (the GitHub
+    ///         shell) or it is unreadable
+    private static @Nullable Config loadEmbedded() {
+        try (java.io.InputStream in = QLEndpoints.class.getResourceAsStream(EMBEDDED)) {
+            if (in == null)
+                return null;
+            return parse(GSON.fromJson(new String(in.readAllBytes(), StandardCharsets.UTF_8),
+                    JsonObject.class));
+        } catch (IOException | RuntimeException e) {
+            LOG.log(Level.WARNING, "Cannot read the embedded Qinglan endpoint config", e);
+            return null;
+        }
+    }
+
+    /// Parses one config object into the record, tolerating missing sections.
+    ///
+    /// @return the parsed config, or {@code null} when the object is unreadable
+    private static @Nullable Config parse(@Nullable JsonObject root) {
+        if (root == null)
+            return null;
+        try {
+            List<StatusEndpoint> status = GSON.fromJson(root.get("status"),
+                    new com.google.gson.reflect.TypeToken<List<StatusEndpoint>>() { }.getType());
+            List<ServerEntry> servers = GSON.fromJson(root.get("servers"),
+                    new com.google.gson.reflect.TypeToken<List<ServerEntry>>() { }.getType());
+            return new Config(
+                    stringOrNull(root, "forumBase"),
+                    stringOrNull(root, "mtrBase"),
+                    stringOrNull(root, "manifestBaseUrl"),
+                    status == null ? List.of() : List.copyOf(status),
+                    servers == null ? List.of() : List.copyOf(servers));
+        } catch (RuntimeException e) {
+            LOG.log(Level.WARNING, "Malformed Qinglan endpoint config", e);
+            return null;
         }
     }
 
