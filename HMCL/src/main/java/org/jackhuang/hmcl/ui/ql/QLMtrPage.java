@@ -74,6 +74,7 @@ import org.jetbrains.annotations.Unmodifiable;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -387,6 +388,24 @@ public class QLMtrPage extends DecoratorAnimatedPage implements DecoratorPage, P
         return " · " + i18n(last.stale() ? "qinglan.cache.stale" : "qinglan.cache.hint", time);
     }
 
+    /// Order of the route picker: numeric service number first, then the display name in a
+    /// Chinese collation; lines without a number are pushed to the end.
+    private static final Comparator<QLMtr.MtrRoute> ROUTE_ORDER =
+            Comparator.comparingInt((QLMtr.MtrRoute route) -> serviceNumber(route.number()))
+                    .thenComparing(route -> QLMtr.primaryName(route.name()),
+                            java.text.Collator.getInstance(java.util.Locale.CHINA));
+
+    /// @return the numeric service number, or {@link Integer#MAX_VALUE} when absent/unparsable
+    private static int serviceNumber(@org.jetbrains.annotations.Nullable String number) {
+        if (number == null || number.isBlank())
+            return Integer.MAX_VALUE;
+        try {
+            return Integer.parseInt(number.trim());
+        } catch (NumberFormatException e) {
+            return Integer.MAX_VALUE - 1;
+        }
+    }
+
     /// Hands the freshly loaded network to the four pickers and re-renders the pages.
     private void populate() {
         QLMtr.SarData snapshot = network;
@@ -401,6 +420,9 @@ public class QLMtrPage extends DecoratorAnimatedPage implements DecoratorPage, P
         for (QLMtr.MtrRoute route : snapshot.routes())
             if (!route.hidden() && route.stops().size() >= 2)
                 routes.add(route);
+        // Line numbers first, numerically (1, 2, 10 rather than 1, 10, 2), then by name;
+        // routes without a service number sort last.
+        routes.sort(ROUTE_ORDER);
 
         stationPicker.setChoices(List.copyOf(unique.values()));
         fromPicker.setChoices(List.copyOf(unique.values()));
