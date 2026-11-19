@@ -43,7 +43,8 @@ import java.util.Set;
 
 /// Client for the Qinglan MTR transit network on the game server.
 ///
-/// Data comes from the MTR mod's HTTP map API on {@code play.simpfun.cn:14614}.
+/// Data comes from the MTR mod's HTTP map API whose base is configured in
+/// {@code ql-endpoints.json} ({@code mtrBase}); nothing is hardcoded here.
 /// Three endpoints are used, all unauthenticated: {@code stations-and-routes}
 /// carries the full static network, {@code departures} carries per-route
 /// timetable packs whose values are offsets relative to the response time, and
@@ -53,8 +54,14 @@ import java.util.Set;
 @NotNullByDefault
 public final class QLMtr {
 
-    /// Base address of the game server hosting the MTR map API.
-    public static final String BASE = "http://play.simpfun.cn:14614";
+    /// @return the configured MTR map API base, or an error when this shell has no endpoint
+    /// @throws IOException when {@code ql-endpoints.json} carries no {@code mtrBase}
+    public static String base() throws IOException {
+        String configured = QLEndpoints.mtrBase();
+        if (configured == null)
+            throw new IOException("MTR 地图地址未配置 (ql-endpoints.json: mtrBase)");
+        return configured.endsWith("/") ? configured.substring(0, configured.length() - 1) : configured;
+    }
 
     private static final String API_PATH = "/mtr/api/map/";
     private static final String DIMENSION = "minecraft:overworld";
@@ -182,7 +189,7 @@ public final class QLMtr {
     /// Callers that tolerate staleness may prefer {@link #sarIfPresent()} to
     /// keep the UI responsive offline.
     public static SarData fetchSar() throws IOException {
-        return fetchSar(BASE);
+        return fetchSar(base());
     }
 
     /// Same as {@link #fetchSar()} but against an explicit map API base URL.
@@ -306,7 +313,7 @@ public final class QLMtr {
     ///
     /// Roughly 0.7&nbsp;MB of JSON; polling at multi-second intervals is fine.
     public static DeparturesData fetchDepartures() throws IOException {
-        return fetchDepartures(BASE);
+        return fetchDepartures(base());
     }
 
     /// Same as {@link #fetchDepartures()} against an explicit map API base URL
@@ -360,7 +367,7 @@ public final class QLMtr {
     /// @param maxCountPerPlatform maximum rows per platform, 4 is usually enough
     public static @Unmodifiable List<MtrArrival> fetchArrivals(List<String> stationIdsHex,
                                                                int maxCountPerPlatform) throws IOException {
-        return fetchArrivals(BASE, stationIdsHex, maxCountPerPlatform);
+        return fetchArrivals(base(), stationIdsHex, maxCountPerPlatform);
     }
 
     /// Same as {@link #fetchArrivals(List, int)} against an explicit map API base URL
@@ -443,7 +450,7 @@ public final class QLMtr {
     /// @throws IOException when the finder does not answer or cannot plan between them
     public static @Unmodifiable MtrDirections fetchDirections(String fromStationName,
                                                               String toStationName) throws IOException {
-        return fetchDirections(BASE, fromStationName, toStationName);
+        return fetchDirections(base(), fromStationName, toStationName);
     }
 
     /// Same as {@link #fetchDirections(String, String)} against an explicit map API base URL

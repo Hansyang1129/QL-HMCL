@@ -63,6 +63,22 @@
 
 > 备注：微软登录的 client id 兜底值沿用 HMCL 官方 Azure 应用，若长期分发建议自行注册应用并通过 `MICROSOFT_AUTH_ID` 环境变量注入。
 
+## 部署配置
+
+仓库是**空壳**：不包含任何服务器地址。需要把 [`ql-endpoints.example.json`](ql-endpoints.example.json) 复制到启动器配置目录（Windows 为 `%APPDATA%\.hmcl\ql-endpoints.json`）并填写：
+
+```json
+{
+  "forumBase": "",
+  "mtrBase": "",
+  "manifestBaseUrl": "",
+  "status": [],
+  "servers": []
+}
+```
+
+留空的项对应页面显示「配置未就绪」，不会向任何地址发起请求。
+
 ## 来源与署名
 
 本项目是 **Hello Minecraft! Launcher（HMCL）** 的修改版，遵循 GPLv3 分享：

@@ -71,7 +71,7 @@ import java.util.Set;
 ///     "std":  { "label": "模组", "mods": [ { "path": "mods/Sodium-0.5.13.jar", "...": "..." } ] },
 ///     "common": { "label": "公共文件", "files": [ ... ] }
 ///   },
-///   "servers": [ { "id": "qinglan", "name": "轻蓝服务器", "address": "play.simpfun.cn:32650", "kind": "minecraft" } ]
+///   "servers": [ { "id": "main", "name": "Example server", "address": "example.invalid:25565", "kind": "minecraft" } ]
 /// }
 /// }</pre>
 @NotNullByDefault

@@ -32,7 +32,7 @@ public final class QLConstants {
     /// Update source baked into this build; deliberately empty.
     ///
     /// <p>There is no public manifest URL yet: the previous placeholder
-    /// ({@code resource.ota8a.cn}) never existed. The real source travels with the pack and
+    /// (a placeholder host that never existed). The real source travels with the pack and
     /// is recorded in the instance's {@code ql-manifest-state.json} by the seed import, so
     /// an instance without one simply has nothing to update from and says so.</p>
     public static final String DEFAULT_MANIFEST_URL = "";

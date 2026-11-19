@@ -79,3 +79,5 @@ language-subtag-registry
 /.workbuddy/
 /CODE_REVIEW_*.md
 
+
+/ql-endpoints.json

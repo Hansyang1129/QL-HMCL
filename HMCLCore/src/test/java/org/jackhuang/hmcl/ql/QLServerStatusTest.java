@@ -215,9 +215,21 @@ class QLServerStatusTest {
     }
 
     @Test
-    void testDefaultProbesShape() {
-        assertEquals(3, QLServerStatus.DEFAULT_PROBES.size());
-        assertEquals("play.simpfun.cn", QLServerStatus.DEFAULT_PROBES.get(0).host());
+    void testDefaultProbesShape() throws Exception {
+        java.nio.file.Path config = java.nio.file.Files.createTempFile("ql-endpoints", ".json");
+        java.nio.file.Files.writeString(config, """
+                {"status":[{"name":"Main","kind":"slp","host":"example.invalid","port":25565},
+                           {"name":"Map","kind":"http","host":"map.invalid","port":8080}]}
+                """);
+        QLEndpoints.setConfigPath(config);
+        try {
+            assertEquals(2, QLServerStatus.defaultProbes().size());
+            assertEquals("example.invalid", QLServerStatus.defaultProbes().get(0).host());
+        } finally {
+            QLEndpoints.setConfigPath(null);
+            QLEndpoints.reload();
+            java.nio.file.Files.deleteIfExists(config);
+        }
     }
 
     /// Functional sink a fake server reply builder writes its raw bytes into.

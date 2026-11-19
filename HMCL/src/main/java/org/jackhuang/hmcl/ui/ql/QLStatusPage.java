@@ -112,14 +112,14 @@ public class QLStatusPage extends DecoratorAnimatedPage implements DecoratorPage
         autoRefresh.stop();
     }
 
-    /// Pings every endpoint of {@link QLServerStatus#DEFAULT_PROBES} off the FX thread.
+    /// Pings every endpoint of {@link QLServerStatus#defaultProbes()} off the FX thread.
     public void refresh() {
         if (busy)
             return;
         busy = true;
         refreshButton.setDisable(true);
         refreshStatusLabel.setText(i18n("qinglan.status.refreshing"));
-        Task.supplyAsync(Schedulers.io(), () -> QLServerStatus.probeAll(QLServerStatus.DEFAULT_PROBES, 5000))
+        Task.supplyAsync(Schedulers.io(), () -> QLServerStatus.probeAll(QLServerStatus.defaultProbes(), 5000))
                 .whenComplete(Schedulers.javafx(), (results, exception) -> {
                     busy = false;
                     refreshButton.setDisable(false);
@@ -132,7 +132,7 @@ public class QLStatusPage extends DecoratorAnimatedPage implements DecoratorPage
                     }
                     refreshStatusLabel.setText(i18n("qinglan.status.refresh.done",
                             LocalDateTime.now().format(QLConstants.WALL_CLOCK)));
-                    renderResults(QLServerStatus.DEFAULT_PROBES, results);
+                    renderResults(QLServerStatus.defaultProbes(), results);
                     // both manual and completed auto probes restart the countdown
                     if (show)
                         autoRefresh.playFromStart();

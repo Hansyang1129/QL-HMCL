@@ -38,6 +38,7 @@ import java.net.URI;
 import java.net.URLConnection;
 import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.List;
 
 /// Probes the Qinglan server fleet.
@@ -123,10 +124,19 @@ public final class QLServerStatus {
     ///
     /// Kept here until the remote manifest gains a {@code servers[]} section; then this
     /// fallback is only used when the manifest carries none.
-    public static final @Unmodifiable List<Probe> DEFAULT_PROBES = List.of(
-            Probe.slp("轻蓝", "play.simpfun.cn", 32650),
-            new Probe("MTR Web", ProbeKind.HTTP, "play.simpfun.cn", 14614, "http://play.simpfun.cn:14614"),
-            new Probe("Reporter", ProbeKind.HTTP, "play.simpfun.cn", 19451, "http://play.simpfun.cn:19451"));
+    public static @Unmodifiable List<Probe> defaultProbes() {
+        List<Probe> probes = new ArrayList<>();
+        for (QLEndpoints.StatusEndpoint endpoint : QLEndpoints.statusProbes()) {
+            if ("slp".equalsIgnoreCase(endpoint.kind())) {
+                probes.add(Probe.slp(endpoint.name(), endpoint.host(), endpoint.port()));
+            } else {
+                String url = endpoint.url() != null ? endpoint.url()
+                        : "http://" + endpoint.host() + ":" + endpoint.port();
+                probes.add(new Probe(endpoint.name(), ProbeKind.HTTP, endpoint.host(), endpoint.port(), url));
+            }
+        }
+        return List.copyOf(probes);
+    }
 
     /// Probes every given endpoint sequentially, swallowing individual failures
     /// into offline results so one dead server never aborts the whole table.

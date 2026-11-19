@@ -40,6 +40,7 @@ import javafx.scene.text.Text;
 import javafx.scene.text.TextFlow;
 import org.jackhuang.hmcl.ql.QLCache;
 import org.jackhuang.hmcl.ql.QLConstants;
+import org.jackhuang.hmcl.ql.QLEndpoints;
 import org.jackhuang.hmcl.ql.QLForum;
 import org.jackhuang.hmcl.task.Schedulers;
 import org.jackhuang.hmcl.task.Task;
@@ -727,12 +728,15 @@ public class QLForumPage extends DecoratorAnimatedPage implements DecoratorPage,
     }
 
     private static String absoluteUrl(String url) {
+        String base = QLEndpoints.forumBase();
+        if (base == null)
+            return url;
         if (url.startsWith("http://localhost:8090"))
-            return QLForum.BASE + url.substring("http://localhost:8090".length());
+            return base + url.substring("http://localhost:8090".length());
         if (url.startsWith("https://localhost:8090"))
-            return QLForum.BASE + url.substring("https://localhost:8090".length());
+            return base + url.substring("https://localhost:8090".length());
         if (url.startsWith("/"))
-            return QLForum.BASE + url;
+            return base + url;
         return url;
     }
 

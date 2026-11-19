@@ -86,7 +86,10 @@ import static org.jackhuang.hmcl.util.logging.Logger.LOG;
 public final class QLManifestTool {
 
     /// URLs of the resource server files, appended after CDN URLs as a fallback source.
-    private static final String DEFAULT_BASE_URL = "https://resource.ota8a.cn/qinglan/files/";
+    private static String defaultBaseUrl() {
+        String configured = QLEndpoints.manifestBaseUrl();
+        return configured == null ? "" : configured;
+    }
 
     private static final String DEFAULT_PACK_NAME = "Qinglan-2nd";
     private static final String DEFAULT_PACK_VERSION = "26.8.1";
@@ -191,7 +194,7 @@ public final class QLManifestTool {
     /// {@code .mrpack} when the instance has no configured update source; the regression
     /// tests drive the same collector without the CLI.</p>
     public static JsonObject buildFromMrpack(Path mrpack, Map<String, String> options) throws IOException {
-        String baseUrl = trimTrailingSlash(options.getOrDefault("base-url", DEFAULT_BASE_URL));
+        String baseUrl = trimTrailingSlash(options.getOrDefault("base-url", defaultBaseUrl()));
         Report report = new Report();
         Set<String> knownPaths = new HashSet<>();
         String packName = options.getOrDefault("pack-name", DEFAULT_PACK_NAME);
@@ -310,7 +313,7 @@ public final class QLManifestTool {
     }
 
     private static JsonObject buildFromInstance(Path runDir, Map<String, String> options) throws IOException {
-        String baseUrl = trimTrailingSlash(options.getOrDefault("base-url", DEFAULT_BASE_URL));
+        String baseUrl = trimTrailingSlash(options.getOrDefault("base-url", defaultBaseUrl()));
         Report report = new Report();
         collectDirectoryEntries(runDir.resolve("mods"), "mods", "std", baseUrl, report);
         for (String folder : COMMON_FOLDERS)
@@ -467,7 +470,7 @@ public final class QLManifestTool {
 
     private static String trimTrailingSlash(String url) {
         if (url == null || url.isBlank())
-            return DEFAULT_BASE_URL;
+            return defaultBaseUrl();
         return url.endsWith("/") ? url : url + "/";
     }
 
@@ -484,9 +487,8 @@ public final class QLManifestTool {
     private static JsonObject renderManifest(String packName, String packVersion,
                                              List<Entry> stdMods, List<Entry> commonFiles, Report report) {
         JsonArray servers = new JsonArray();
-        servers.add(serverObject("qinglan-main", "轻蓝服务器", "play.simpfun.cn:32650", "minecraft"));
-        servers.add(serverObject("mtr-web", "MTR 地图", "play.simpfun.cn:14614", "mtr-web"));
-        servers.add(serverObject("mtr-reporter", "MTR 数据", "play.simpfun.cn:19451", "mtr-reporter"));
+        for (QLEndpoints.ServerEntry server : QLEndpoints.servers())
+            servers.add(serverObject(server.id(), server.name(), server.address(), server.kind()));
 
         JsonObject channels = new JsonObject();
         channels.add("std", channelObject("官方包", stdMods, null));

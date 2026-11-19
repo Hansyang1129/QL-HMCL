@@ -48,11 +48,23 @@ import org.w3c.dom.Element;
 @NotNullByDefault
 public final class QLForum {
 
-    /// Base address of the forum; kept HTTP because HTTPS does not respond.
-    public static final String BASE = "http://qlbbs.ota8a.cn";
+    /// @return the configured forum base, or an error when this shell has no endpoint yet
+    /// @throws IOException when {@code ql-endpoints.json} carries no {@code forumBase}
+    public static String base() throws IOException {
+        String configured = QLEndpoints.forumBase();
+        if (configured == null)
+            throw new IOException("论坛地址未配置 (ql-endpoints.json: forumBase)");
+        return configured.endsWith("/") ? configured.substring(0, configured.length() - 1) : configured;
+    }
 
-    private static final String LIST_API = BASE + "/apis/api.content.halo.run/v1alpha1/posts";
-    private static final String POST_API = BASE + "/apis/api.content.halo.run/v1alpha1/posts";
+    private static String listApi() throws IOException {
+        return base() + "/apis/api.content.halo.run/v1alpha1/posts";
+    }
+
+    private static String postApi() throws IOException {
+        return base() + "/apis/api.content.halo.run/v1alpha1/posts";
+    }
+
     private static final int RETRIES = 3;
 
     private QLForum() {
@@ -76,7 +88,8 @@ public final class QLForum {
 
         /// Absolute URL of the post on the site, for "open in browser" actions.
         public String toUrl() {
-            return BASE + permalink;
+            String configured = QLEndpoints.forumBase();
+            return configured == null ? permalink : configured + permalink;
         }
     }
 
@@ -94,7 +107,8 @@ public final class QLForum {
 
         /// Base address used to resolve relative links inside {@code html}.
         public String base() {
-            return BASE;
+            String configured = QLEndpoints.forumBase();
+            return configured == null ? "" : configured;
         }
     }
 
@@ -103,7 +117,7 @@ public final class QLForum {
     /// @param page 1-based page index
     /// @param size number of posts per page
     public static @Unmodifiable List<Post> fetchPosts(int page, int size) throws IOException {
-        String body = doGetRetry(URI.create(LIST_API + "?size=" + size + "&page=" + page + "&sort=publishTime,desc"));
+        String body = doGetRetry(URI.create(listApi() + "?size=" + size + "&page=" + page + "&sort=publishTime,desc"));
         JsonObject root = parse(body, "post list");
         // error envelopes ({"detail", "status": 500}) carry no items
         if (!root.has("items"))
@@ -145,7 +159,7 @@ public final class QLForum {
     /// link slug is not a valid post name for the content API, so posts opened
     /// from this list fetch their body from the rendered article page instead.
     public static @Unmodifiable List<Post> fetchPostsFromRss() throws IOException {
-        return fetchPostsFromRss(BASE);
+        return fetchPostsFromRss(base());
     }
 
     /// Same as {@link #fetchPostsFromRss()} but against the given base address, for tests.
@@ -208,7 +222,7 @@ public final class QLForum {
     ///
     /// @param permalink relative permalink such as {@code /archives/<slug>}
     public static Article fetchArticleFromPage(String permalink) throws IOException {
-        return fetchArticleFromPage(BASE, permalink);
+        return fetchArticleFromPage(base(), permalink);
     }
 
     /// Same as {@link #fetchArticleFromPage(String)} but against the given base address, for tests.
@@ -241,7 +255,7 @@ public final class QLForum {
     /// When the content API answers 404 for {@code name} (RSS slugs are not api
     /// names) callers should retry with {@link #fetchArticleFromPage(String)}.
     public static Article fetchArticle(String name) throws IOException {
-        String body = doGetRetry(URI.create(POST_API + "/" + name));
+        String body = doGetRetry(URI.create(postApi() + "/" + name));
         JsonObject root = parse(body, "article");
         if (!root.has("content"))
             throw new IOException("Forum article request failed: server answered an error envelope");
