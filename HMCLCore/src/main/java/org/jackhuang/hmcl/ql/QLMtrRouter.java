@@ -22,6 +22,7 @@ import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.Unmodifiable;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
@@ -262,7 +263,9 @@ public final class QLMtrRouter {
                 break;
             cursor = trace.previous();
         }
-        List<Edge> ordered = path.reversed();
+        // Java 17 target: List.reversed() only exists from 21 on.
+        List<Edge> ordered = new ArrayList<>(path);
+        Collections.reverse(ordered);
 
         List<MtrLeg> legs = new ArrayList<>();
         List<String> rideEdges = new ArrayList<>();
